@@ -81,6 +81,13 @@ function App() {
   const [editingItem, setEditingItem] = useState(null);
   const [editItemForm, setEditItemForm] = useState({ ...EMPTY_ITEM });
 
+  /* ── shopify publish ── */
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'in_storage' | 'listed' | 'sold'
+  const [publishingItem, setPublishingItem] = useState(null);
+  const [publishForm, setPublishForm] = useState({ price: '', title: '' });
+  const [publishLoading, setPublishLoading] = useState(false);
+  const [unlistingItem, setUnlistingItem] = useState(null);
+
   /* ════════════════════════════════════════════════
      DONOR SEARCH (for donation form)
      ════════════════════════════════════════════════ */
@@ -123,6 +130,12 @@ function App() {
       if (error) throw error;
 
       let filtered = data || [];
+
+      // Status filter
+      if (statusFilter !== 'all') {
+        filtered = filtered.filter(item => item.status === statusFilter);
+      }
+
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         filtered = filtered.filter(item =>
@@ -158,11 +171,14 @@ function App() {
         donors: uniqueDonors.size,
         pendingNotify: (data || []).filter(i =>
           !i.notification_sent && daysSince(i.donation?.date_accepted) >= 30 && i.donation?.donor?.donor_email
-        ).length
+        ).length,
+        inStorage: (data || []).filter(i => (i.status || 'in_storage') === 'in_storage').length,
+        listed: (data || []).filter(i => i.status === 'listed').length,
+        sold: (data || []).filter(i => i.status === 'sold').length,
       });
     } catch (err) { console.error('Fetch error:', err); }
     finally { setListLoading(false); }
-  }, [searchQuery, sortField, sortDir]);
+  }, [searchQuery, sortField, sortDir, statusFilter]);
 
   useEffect(() => { if (tab === 'inventory') fetchItems(); }, [tab, fetchItems]);
 
@@ -394,6 +410,78 @@ function App() {
     setDonorStep('selected');
     setTab('donate');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  /* ════════════════════════════════════════════════
+     SHOPIFY ACTIONS
+     ════════════════════════════════════════════════ */
+  const startPublish = (item) => {
+    setPublishingItem(item.id);
+    setPublishForm({ price: item.price || '', title: item.item_description });
+  };
+
+  const cancelPublish = () => {
+    setPublishingItem(null);
+    setPublishForm({ price: '', title: '' });
+  };
+
+  const publishToShopify = async () => {
+    if (!supabase || !publishingItem || !publishForm.price) return;
+    setPublishLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('shopify-publish', {
+        body: {
+          itemId: publishingItem,
+          price: parseFloat(publishForm.price),
+          title: publishForm.title.trim() || undefined,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      setPublishingItem(null);
+      setPublishForm({ price: '', title: '' });
+      fetchItems();
+    } catch (err) {
+      console.error('Publish error:', err);
+      setMessage({ type: 'error', text: `Publish failed: ${err.message}` });
+    } finally { setPublishLoading(false); }
+  };
+
+  const unlistFromShopify = async (item) => {
+    if (!supabase || !item.shopify_product_id) return;
+    setUnlistingItem(item.id);
+    try {
+      // Update local status back to in_storage
+      const { error } = await supabase
+        .from('donation_items')
+        .update({
+          status: 'in_storage',
+          shopify_product_id: null,
+          shopify_variant_id: null,
+          price: null,
+        })
+        .eq('id', item.id);
+      if (error) throw error;
+
+      // Note: Optionally delete from Shopify too via another edge function
+      // For now we just unlink it locally
+      setUnlistingItem(null);
+      fetchItems();
+    } catch (err) {
+      console.error('Unlist error:', err);
+      setUnlistingItem(null);
+    }
+  };
+
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case 'listed': return 'Listed';
+      case 'sold': return 'Sold';
+      case 'claimed': return 'Claimed';
+      case 'removed': return 'Removed';
+      default: return 'In Storage';
+    }
   };
 
   const toggleSort = (field) => {
@@ -696,33 +784,42 @@ function App() {
       {/* ═══ TAB: INVENTORY ═══ */}
       {tab === 'inventory' && (
         <main className="cr-main">
-          <div className="cr-stats-grid">
+          <div className="cr-stats-grid four">
             <div className="cr-stat">
               <div className="cr-stat-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
                   <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4M4 7l8 4M4 7v10l8 4m0-10v10" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </div>
-              <span className="cr-stat-num">{stats.total}</span>
-              <span className="cr-stat-label">Total Items</span>
+              <span className="cr-stat-num">{stats.inStorage || 0}</span>
+              <span className="cr-stat-label">In Storage</span>
+            </div>
+            <div className="cr-stat">
+              <div className="cr-stat-icon blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
+                  <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <span className="cr-stat-num">{stats.listed || 0}</span>
+              <span className="cr-stat-label">Listed on Store</span>
             </div>
             <div className="cr-stat">
               <div className="cr-stat-icon green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
+                  <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <span className="cr-stat-num">{stats.sold || 0}</span>
+              <span className="cr-stat-label">Sold</span>
+            </div>
+            <div className="cr-stat">
+              <div className="cr-stat-icon amber">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
                   <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8z" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </div>
               <span className="cr-stat-num">{stats.donors}</span>
               <span className="cr-stat-label">Active Donors</span>
-            </div>
-            <div className="cr-stat">
-              <div className="cr-stat-icon amber">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
-                  <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-              <span className="cr-stat-num">{stats.pendingNotify}</span>
-              <span className="cr-stat-label">Pending Notices</span>
             </div>
           </div>
 
@@ -743,6 +840,22 @@ function App() {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="cr-status-filter">
+            {[
+              ['all', 'All', stats.total],
+              ['in_storage', 'In Storage', stats.inStorage],
+              ['listed', 'Listed', stats.listed],
+              ['sold', 'Sold', stats.sold],
+            ].map(([key, label, count]) => (
+              <button key={key}
+                className={`cr-status-btn ${statusFilter === key ? 'on' : ''} ${key}`}
+                onClick={() => setStatusFilter(key)}>
+                {label}
+                {count > 0 && <span className="cr-status-count">{count}</span>}
+              </button>
+            ))}
           </div>
 
           {listLoading ? (
@@ -787,6 +900,8 @@ function App() {
                         </div>
                       </div>
                       <div className="cr-card-right">
+                        <span className={`cr-tag status ${item.status || 'in_storage'}`}>{getStatusLabel(item.status)}</span>
+                        {item.price && <span className="cr-tag price">${parseFloat(item.price).toFixed(2)}</span>}
                         <span className="cr-tag location">{item.storage_location}</span>
                         <span className={`cr-tag age ${days >= 30 ? 'warn' : ''}`}>{days}d</span>
                         {item.notification_sent && <span className="cr-tag sent" title="Notification sent">Sent</span>}
@@ -832,14 +947,95 @@ function App() {
                             {item.item_image_url && (
                               <div className="cr-detail-photo"><img src={item.item_image_url} alt={item.item_description} loading="lazy" /></div>
                             )}
-                            <div className="cr-detail-actions">
-                              <button className="cr-act edit" onClick={() => startEditItem(item)}>
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
-                                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" />
-                                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+
+                            {/* Shopify publish form (inline) */}
+                            {publishingItem === item.id && (
+                              <div className="cr-publish-form">
+                                <h4 className="cr-publish-title">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
+                                    <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                  Publish to Shopify Store
+                                </h4>
+                                <div className="cr-field-grid">
+                                  <div className="cr-field">
+                                    <label>Listing Title</label>
+                                    <input type="text" value={publishForm.title}
+                                      onChange={e => setPublishForm(p => ({ ...p, title: e.target.value }))}
+                                      placeholder={item.item_description} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Price <span className="cr-req">*</span></label>
+                                    <div className="cr-price-input">
+                                      <span className="cr-price-prefix">$</span>
+                                      <input type="number" step="0.01" min="0" value={publishForm.price}
+                                        onChange={e => setPublishForm(p => ({ ...p, price: e.target.value }))}
+                                        placeholder="0.00" required />
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="cr-detail-actions">
+                                  <button className="cr-act publish" onClick={publishToShopify} disabled={publishLoading || !publishForm.price}>
+                                    {publishLoading ? 'Publishing…' : 'Publish to Store'}
+                                  </button>
+                                  <button className="cr-act" onClick={cancelPublish}>Cancel</button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Shopify listing info (for listed items) */}
+                            {item.status === 'listed' && item.shopify_product_id && publishingItem !== item.id && (
+                              <div className="cr-shopify-info">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="16" height="16">
+                                  <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" strokeLinecap="round" strokeLinejoin="round" />
                                 </svg>
-                                Edit
-                              </button>
+                                Listed on Shopify &middot; ${parseFloat(item.price).toFixed(2)}
+                                {item.shopify_product_id && <span className="cr-shopify-id"> &middot; Product #{item.shopify_product_id}</span>}
+                              </div>
+                            )}
+
+                            {/* Sold info */}
+                            {item.status === 'sold' && (
+                              <div className="cr-sold-info">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="16" height="16">
+                                  <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                                Sold{item.sold_at ? ` on ${formatDate(item.sold_at.split('T')[0])}` : ''}
+                                {item.price && ` for $${parseFloat(item.price).toFixed(2)}`}
+                                {item.shopify_order_id && <span> &middot; Order #{item.shopify_order_id}</span>}
+                              </div>
+                            )}
+
+                            <div className="cr-detail-actions">
+                              {/* Publish button — only for in_storage items */}
+                              {(item.status === 'in_storage' || !item.status) && publishingItem !== item.id && (
+                                <button className="cr-act publish" onClick={() => startPublish(item)}>
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
+                                    <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                  Publish to Store
+                                </button>
+                              )}
+
+                              {/* Unlist button — only for listed items */}
+                              {item.status === 'listed' && (
+                                <button className="cr-act danger" onClick={() => unlistFromShopify(item)}
+                                  disabled={unlistingItem === item.id}>
+                                  {unlistingItem === item.id ? 'Unlisting…' : 'Unlist from Store'}
+                                </button>
+                              )}
+
+                              {/* Edit — not available for sold items */}
+                              {item.status !== 'sold' && (
+                                <button className="cr-act edit" onClick={() => startEditItem(item)}>
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
+                                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" />
+                                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                  Edit
+                                </button>
+                              )}
+
                               {deleteConfirm === item.id ? (
                                 <span className="cr-confirm-delete">
                                   Delete this item?
@@ -847,12 +1043,14 @@ function App() {
                                   <button className="cr-act" onClick={() => setDeleteConfirm(null)}>Cancel</button>
                                 </span>
                               ) : (
-                                <button className="cr-act danger" onClick={() => setDeleteConfirm(item.id)}>
-                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
-                                    <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                                  Delete
-                                </button>
+                                item.status !== 'sold' && (
+                                  <button className="cr-act danger" onClick={() => setDeleteConfirm(item.id)}>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
+                                      <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                    Delete
+                                  </button>
+                                )
                               )}
                             </div>
                           </>
