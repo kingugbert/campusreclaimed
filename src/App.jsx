@@ -192,6 +192,9 @@ function App() {
   const [publishLoading, setPublishLoading] = useState(false);
   const [unlistingItem, setUnlistingItem] = useState(null);
 
+  // Waiver tracking
+  const [donorWaivers, setDonorWaivers] = useState({}); // { donorId: [{ id, waiver_url, signed_at }, ...] }
+
   /* ════════════════════════════════════════════════
      DONOR SEARCH (for donation form)
      ════════════════════════════════════════════════ */
@@ -295,11 +298,21 @@ function App() {
     try {
       const { data, error } = await supabase
         .from('donors')
-        .select(`*, donations(id, date_accepted, donation_items(id))`)
+        .select(`*, donations(id, date_accepted, donation_items(id)), donor_waivers(id, waiver_url, signed_at)`)
         .order('created_at', { ascending: false });
       if (error) throw error;
 
       let filtered = data || [];
+
+      // Build waiver lookup from the joined data
+      const waiverMap = {};
+      filtered.forEach(d => {
+        if (d.donor_waivers && d.donor_waivers.length > 0) {
+          waiverMap[d.id] = d.donor_waivers;
+        }
+      });
+      setDonorWaivers(prev => ({ ...prev, ...waiverMap }));
+
       if (donorSearchQuery.trim()) {
         const q = donorSearchQuery.trim().toLowerCase();
         filtered = filtered.filter(d =>
@@ -1307,6 +1320,11 @@ function App() {
                         </div>
                       </div>
                       <div className="cr-card-right">
+                        {(donorWaivers[donor.id] && donorWaivers[donor.id].length > 0) ? (
+                          <span className="cr-tag status listed" title="Waiver on file">Waiver ✓</span>
+                        ) : (
+                          <span className="cr-tag status in_storage" title="No waiver on file">No Waiver</span>
+                        )}
                         <span className="cr-tag location">{totalDonations} visit{totalDonations !== 1 ? 's' : ''}</span>
                         <span className="cr-tag age">{totalItems} item{totalItems !== 1 ? 's' : ''}</span>
                         <svg className={`cr-chevron ${isExp ? 'open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
@@ -1349,6 +1367,31 @@ function App() {
                               <div><span className="cr-detail-label">Phone</span><span>{donor.phone_number}</span></div>
                               {donor.donor_email && <div><span className="cr-detail-label">Email</span><span>{donor.donor_email}</span></div>}
                               <div><span className="cr-detail-label">Member Since</span><span>{formatDate(donor.created_at?.split('T')[0])}</span></div>
+                            </div>
+
+                            {/* ── Waiver Section ── */}
+                            <div className="cr-waiver-section">
+                              <h4 className="cr-history-title">Liability Waiver</h4>
+                              {donorWaivers[donor.id] && donorWaivers[donor.id].length > 0 ? (
+                                <div className="cr-waiver-list">
+                                  {donorWaivers[donor.id].map(w => (
+                                    <div key={w.id} className="cr-waiver-entry">
+                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="16" height="16">
+                                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+                                      </svg>
+                                      <span className="cr-waiver-date">Signed {formatDate(w.signed_at?.split('T')[0])}</span>
+                                      <a href={w.waiver_url} target="_blank" rel="noopener noreferrer" className="cr-act edit cr-waiver-link">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="14" height="14">
+                                          <path d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                        View PDF
+                                      </a>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="cr-history-empty">No waiver on file for this donor.</p>
+                              )}
                             </div>
 
                             {donorDonations[donor.id] && (
