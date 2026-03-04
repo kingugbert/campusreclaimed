@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import './App.css';
 
@@ -19,32 +19,150 @@ const formatDate = (dateStr) => {
 
 const daysSince = (dateStr) => {
   if (!dateStr) return 0;
-  const d = new Date(dateStr + 'T00:00:00');
-  return Math.floor((Date.now() - d.getTime()) / 86400000);
+  return Math.floor((Date.now() - new Date(dateStr + 'T00:00:00').getTime()) / 86400000);
 };
 
+/* ─── category images (Unsplash) ─── */
+const CATEGORY_IMAGES = [
+  { label: 'Furniture', src: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=600&h=400&fit=crop', alt: 'Modern sofa' },
+  { label: 'Desk & Study', src: 'https://images.unsplash.com/photo-1518455027359-f3f8164ba6bd?w=600&h=400&fit=crop', alt: 'Study desk setup' },
+  { label: 'Kitchen', src: 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=600&h=400&fit=crop', alt: 'Kitchen items' },
+  { label: 'Electronics', src: 'https://images.unsplash.com/photo-1498049794561-7780e7231661?w=600&h=400&fit=crop', alt: 'Electronics' },
+  { label: 'Bedding', src: 'https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?w=600&h=400&fit=crop', alt: 'Bedroom furnishings' },
+  { label: 'Books', src: 'https://images.unsplash.com/photo-1512820790803-83ca734da794?w=600&h=400&fit=crop', alt: 'Stack of books' },
+];
+
+const HERO_IMAGE = 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=1200&h=500&fit=crop';
+
 /* ─── constants ─── */
-const EMPTY_FORM = {
-  donorName: '',
-  donorEmail: '',
-  address: '',
-  phoneNumber: '',
-  dateAccepted: new Date().toISOString().split('T')[0],
-  itemDescription: '',
-  storageLocation: ''
-};
+const EMPTY_DONOR = { donorName: '', donorEmail: '', address: '', phoneNumber: '' };
+const EMPTY_ITEM = { itemDescription: '', storageLocation: '' };
+
+/* ================================================================== */
+/* ─── LOGIN SCREEN ─── */
+function LoginScreen({ onLogin }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="cr-app">
+      <header className="cr-hero">
+        <div className="cr-hero-bg">
+          <img src={HERO_IMAGE} alt="" aria-hidden="true" />
+          <div className="cr-hero-overlay"></div>
+        </div>
+        <div className="cr-hero-content">
+          <div className="cr-hero-badge">Campus Sustainability</div>
+          <h1>Campus <span>Reclaimed</span></h1>
+          <p>Give campus items a second life. Track donations, manage inventory, and keep the cycle going.</p>
+        </div>
+      </header>
+
+      <main className="cr-main">
+        <div className="cr-login-wrapper">
+          <div className="cr-login-card">
+            <h2 className="cr-login-title">Staff Sign In</h2>
+            <p className="cr-login-subtitle">Sign in to manage donations and inventory</p>
+
+            {error && (
+              <div className="cr-toast error" role="alert">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
+                  <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="cr-login-form">
+              <div className="cr-field">
+                <label htmlFor="login-email">Email</label>
+                <input type="email" id="login-email" value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="you@university.edu" required autoFocus />
+              </div>
+              <div className="cr-field">
+                <label htmlFor="login-password">Password</label>
+                <input type="password" id="login-password" value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="••••••••" required minLength={6} />
+              </div>
+              <button type="submit" className="cr-btn-primary cr-login-btn" disabled={loading}>
+                {loading ? <><span className="cr-spinner"></span>Signing in…</> : 'Sign In'}
+              </button>
+            </form>
+          </div>
+        </div>
+      </main>
+
+      <footer className="cr-footer">
+        <p>Campus Reclaimed &middot; Reduce, Reuse, Reclaim</p>
+      </footer>
+    </div>
+  );
+}
 
 /* ================================================================== */
 function App() {
-  const [tab, setTab] = useState('add');          // 'add' | 'inventory'
-  const [formData, setFormData] = useState({ ...EMPTY_FORM });
-  const [editingId, setEditingId] = useState(null);
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
+  /* ── auth ── */
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    // Check for existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+  };
+
+  /* ── navigation ── */
+  const [tab, setTab] = useState('donate');
+
+  /* ── donation form state ── */
+  const [donorStep, setDonorStep] = useState('search'); // 'search' | 'selected' | 'new'
+  const [donorSearch, setDonorSearch] = useState('');
+  const [donorResults, setDonorResults] = useState([]);
+  const [donorSearching, setDonorSearching] = useState(false);
+  const [selectedDonor, setSelectedDonor] = useState(null);
+  const [donorForm, setDonorForm] = useState({ ...EMPTY_DONOR });
+  const [dateAccepted, setDateAccepted] = useState(new Date().toISOString().split('T')[0]);
+  const [donationItems, setDonationItems] = useState([{ ...EMPTY_ITEM, _key: Date.now() }]);
+  const [imageFiles, setImageFiles] = useState({});       // { key: [File, File, ...] }
+  const [imagePreviews, setImagePreviews] = useState({}); // { key: [dataUrl, dataUrl, ...] }
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+  const searchTimeout = useRef(null);
 
-  // Inventory list state
+  /* ── inventory state ── */
   const [items, setItems] = useState([]);
   const [listLoading, setListLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -52,470 +170,1090 @@ function App() {
   const [sortDir, setSortDir] = useState('desc');
   const [expandedItem, setExpandedItem] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-  const [stats, setStats] = useState({ total: 0, thisMonth: 0, pendingNotify: 0 });
+  const [stats, setStats] = useState({ total: 0, thisMonth: 0, donors: 0, pendingNotify: 0 });
 
-  /* ─── data fetching ─── */
+  /* ── donors tab state ── */
+  const [donors, setDonors] = useState([]);
+  const [donorsLoading, setDonorsLoading] = useState(false);
+  const [donorSearchQuery, setDonorSearchQuery] = useState('');
+  const [expandedDonor, setExpandedDonor] = useState(null);
+  const [donorDonations, setDonorDonations] = useState({});
+  const [editingDonor, setEditingDonor] = useState(null);
+  const [editDonorForm, setEditDonorForm] = useState({ ...EMPTY_DONOR });
+
+  /* ── inline editing ── */
+  const [editingItem, setEditingItem] = useState(null);
+  const [editItemForm, setEditItemForm] = useState({ ...EMPTY_ITEM });
+
+  /* ── shopify publish ── */
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'in_storage' | 'listed' | 'sold'
+  const [publishingItem, setPublishingItem] = useState(null);
+  const [publishForm, setPublishForm] = useState({ price: '', title: '' });
+  const [publishLoading, setPublishLoading] = useState(false);
+  const [unlistingItem, setUnlistingItem] = useState(null);
+
+  /* ════════════════════════════════════════════════
+     DONOR SEARCH (for donation form)
+     ════════════════════════════════════════════════ */
+  const searchDonors = useCallback(async (query) => {
+    if (!supabase || !query.trim()) { setDonorResults([]); return; }
+    setDonorSearching(true);
+    try {
+      const q = `%${query.trim()}%`;
+      const { data, error } = await supabase
+        .from('donors')
+        .select('*')
+        .or(`donor_name.ilike.${q},donor_email.ilike.${q},phone_number.ilike.${q}`)
+        .order('donor_name')
+        .limit(8);
+      if (error) throw error;
+      setDonorResults(data || []);
+    } catch (err) { console.error('Donor search error:', err); }
+    finally { setDonorSearching(false); }
+  }, []);
+
+  useEffect(() => {
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    if (donorSearch.trim().length >= 2) {
+      searchTimeout.current = setTimeout(() => searchDonors(donorSearch), 300);
+    } else { setDonorResults([]); }
+    return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current); };
+  }, [donorSearch, searchDonors]);
+
+  /* ════════════════════════════════════════════════
+     INVENTORY FETCH (joined query)
+     ════════════════════════════════════════════════ */
   const fetchItems = useCallback(async () => {
     if (!supabase) return;
     setListLoading(true);
     try {
-      let query = supabase
-        .from('inventory_items')
-        .select('*')
-        .order(sortField, { ascending: sortDir === 'asc' });
+      const { data, error } = await supabase
+        .from('donation_items')
+        .select(`*, item_images(id, image_url, display_order), donation:donations!inner(id, date_accepted, notes, donor:donors!inner(id, donor_name, donor_email, address, phone_number))`)
+        .order('created_at', { ascending: sortDir === 'asc' });
+      if (error) throw error;
+
+      let filtered = data || [];
+
+      // Status filter
+      if (statusFilter !== 'all') {
+        filtered = filtered.filter(item => item.status === statusFilter);
+      }
 
       if (searchQuery.trim()) {
-        const q = `%${searchQuery.trim()}%`;
-        query = query.or(
-          `donor_name.ilike.${q},item_description.ilike.${q},storage_location.ilike.${q}`
+        const q = searchQuery.trim().toLowerCase();
+        filtered = filtered.filter(item =>
+          item.item_description?.toLowerCase().includes(q) ||
+          item.storage_location?.toLowerCase().includes(q) ||
+          item.donation?.donor?.donor_name?.toLowerCase().includes(q) ||
+          item.donation?.donor?.donor_email?.toLowerCase().includes(q)
         );
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
-      setItems(data || []);
+      if (sortField === 'donor_name') {
+        filtered.sort((a, b) => {
+          const aName = a.donation?.donor?.donor_name || '';
+          const bName = b.donation?.donor?.donor_name || '';
+          return sortDir === 'asc' ? aName.localeCompare(bName) : bName.localeCompare(aName);
+        });
+      } else if (sortField === 'date_accepted') {
+        filtered.sort((a, b) => {
+          const aD = a.donation?.date_accepted || '';
+          const bD = b.donation?.date_accepted || '';
+          return sortDir === 'asc' ? aD.localeCompare(bD) : bD.localeCompare(aD);
+        });
+      }
 
-      // compute stats from full dataset
+      setItems(filtered);
+
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      const uniqueDonors = new Set((data || []).map(i => i.donation?.donor?.id).filter(Boolean));
       setStats({
         total: (data || []).length,
-        thisMonth: (data || []).filter(i => i.date_accepted >= monthStart).length,
-        pendingNotify: (data || []).filter(i => !i.notification_sent && daysSince(i.date_accepted) >= 30 && i.donor_email).length
+        thisMonth: (data || []).filter(i => i.donation?.date_accepted >= monthStart).length,
+        donors: uniqueDonors.size,
+        pendingNotify: (data || []).filter(i =>
+          !i.notification_sent && daysSince(i.donation?.date_accepted) >= 30 && i.donation?.donor?.donor_email
+        ).length,
+        inStorage: (data || []).filter(i => (i.status || 'in_storage') === 'in_storage').length,
+        listed: (data || []).filter(i => i.status === 'listed').length,
+        sold: (data || []).filter(i => i.status === 'sold').length,
       });
-    } catch (err) {
-      console.error('Fetch error:', err);
-    } finally {
-      setListLoading(false);
-    }
-  }, [searchQuery, sortField, sortDir]);
+    } catch (err) { console.error('Fetch error:', err); }
+    finally { setListLoading(false); }
+  }, [searchQuery, sortField, sortDir, statusFilter]);
 
-  useEffect(() => {
-    if (tab === 'inventory') fetchItems();
-  }, [tab, fetchItems]);
+  useEffect(() => { if (tab === 'inventory') fetchItems(); }, [tab, fetchItems]);
 
-  /* ─── form handlers ─── */
-  const handleInputChange = (e) => {
+  /* ════════════════════════════════════════════════
+     DONORS LIST FETCH
+     ════════════════════════════════════════════════ */
+  const fetchDonors = useCallback(async () => {
+    if (!supabase) return;
+    setDonorsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('donors')
+        .select(`*, donations(id, date_accepted, donation_items(id))`)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+
+      let filtered = data || [];
+      if (donorSearchQuery.trim()) {
+        const q = donorSearchQuery.trim().toLowerCase();
+        filtered = filtered.filter(d =>
+          d.donor_name?.toLowerCase().includes(q) ||
+          d.donor_email?.toLowerCase().includes(q) ||
+          d.phone_number?.includes(q)
+        );
+      }
+      setDonors(filtered);
+    } catch (err) { console.error('Fetch donors error:', err); }
+    finally { setDonorsLoading(false); }
+  }, [donorSearchQuery]);
+
+  useEffect(() => { if (tab === 'donors') fetchDonors(); }, [tab, fetchDonors]);
+
+  /* ── fetch donations for a specific donor ── */
+  const fetchDonorDonations = async (donorId) => {
+    if (!supabase || donorDonations[donorId]) return;
+    try {
+      const { data, error } = await supabase
+        .from('donations')
+        .select(`*, donation_items(*)`)
+        .eq('donor_id', donorId)
+        .order('date_accepted', { ascending: false });
+      if (error) throw error;
+      setDonorDonations(prev => ({ ...prev, [donorId]: data || [] }));
+    } catch (err) { console.error('Fetch donor donations error:', err); }
+  };
+
+  /* ════════════════════════════════════════════════
+     DONATION FORM HANDLERS
+     ════════════════════════════════════════════════ */
+  const handleDonorFormChange = (e) => {
     const { name, value } = e.target;
-    if (name === 'phoneNumber') {
-      setFormData(prev => ({ ...prev, phoneNumber: formatPhone(value) }));
-    } else {
-      setFormData(prev => ({ ...prev, [name]: value }));
-    }
+    if (name === 'phoneNumber') setDonorForm(prev => ({ ...prev, phoneNumber: formatPhone(value) }));
+    else setDonorForm(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) {
-      setMessage({ type: 'error', text: 'Image must be under 10 MB.' });
-      return;
-    }
-    setImageFile(file);
-    const reader = new FileReader();
-    reader.onloadend = () => setImagePreview(reader.result);
-    reader.readAsDataURL(file);
+  const selectExistingDonor = (donor) => {
+    setSelectedDonor(donor);
+    setDonorStep('selected');
+    setDonorSearch('');
+    setDonorResults([]);
   };
 
-  const resetForm = () => {
-    setFormData({ ...EMPTY_FORM });
-    setImageFile(null);
-    setImagePreview(null);
-    setEditingId(null);
+  const startNewDonor = () => {
+    setDonorStep('new');
+    setDonorForm({ ...EMPTY_DONOR, donorName: donorSearch.trim() });
+    setDonorResults([]);
+  };
+
+  const changeDonor = () => {
+    setSelectedDonor(null);
+    setDonorStep('search');
+    setDonorSearch('');
+    setDonorForm({ ...EMPTY_DONOR });
+  };
+
+  const handleItemChange = (key, field, value) => {
+    setDonationItems(prev => prev.map(item =>
+      item._key === key ? { ...item, [field]: value } : item
+    ));
+  };
+
+  const addItem = () => {
+    setDonationItems(prev => [...prev, { ...EMPTY_ITEM, _key: Date.now() }]);
+  };
+
+  const removeItem = (key) => {
+    if (donationItems.length <= 1) return;
+    setDonationItems(prev => prev.filter(item => item._key !== key));
+    setImageFiles(prev => { const n = { ...prev }; delete n[key]; return n; });
+    setImagePreviews(prev => { const n = { ...prev }; delete n[key]; return n; });
+  };
+
+  const handleItemImage = (key, e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    const existing = imageFiles[key] || [];
+    const remaining = 4 - existing.length;
+    if (remaining <= 0) { setMessage({ type: 'error', text: 'Maximum 4 photos per item.' }); return; }
+    const toAdd = files.slice(0, remaining);
+    for (const file of toAdd) {
+      if (file.size > 10 * 1024 * 1024) { setMessage({ type: 'error', text: 'Each image must be under 10 MB.' }); return; }
+    }
+    setImageFiles(prev => ({ ...prev, [key]: [...(prev[key] || []), ...toAdd] }));
+    toAdd.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => setImagePreviews(prev => ({ ...prev, [key]: [...(prev[key] || []), reader.result] }));
+      reader.readAsDataURL(file);
+    });
+    // Reset the input so the same file can be re-selected
+    e.target.value = '';
+  };
+
+  const removeItemImage = (key, index) => {
+    setImageFiles(prev => {
+      const arr = [...(prev[key] || [])];
+      arr.splice(index, 1);
+      return { ...prev, [key]: arr };
+    });
+    setImagePreviews(prev => {
+      const arr = [...(prev[key] || [])];
+      arr.splice(index, 1);
+      return { ...prev, [key]: arr };
+    });
+  };
+
+  const resetDonationForm = () => {
+    setDonorStep('search');
+    setDonorSearch('');
+    setDonorResults([]);
+    setSelectedDonor(null);
+    setDonorForm({ ...EMPTY_DONOR });
+    setDateAccepted(new Date().toISOString().split('T')[0]);
+    setDonationItems([{ ...EMPTY_ITEM, _key: Date.now() }]);
+    setImageFiles({});
+    setImagePreviews({});
+    setMessage({ type: '', text: '' });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!supabase) {
-      setMessage({ type: 'error', text: 'Supabase is not configured. Check your .env file.' });
+    if (!supabase) { setMessage({ type: 'error', text: 'Supabase is not configured.' }); return; }
+
+    const validItems = donationItems.filter(i => i.itemDescription.trim() && i.storageLocation.trim());
+    if (validItems.length === 0) {
+      setMessage({ type: 'error', text: 'Please add at least one item with a description and storage location.' });
       return;
     }
     setLoading(true);
     setMessage({ type: '', text: '' });
 
     try {
-      let imageUrl = editingId ? undefined : null;
-
-      if (imageFile) {
-        const fileExt = imageFile.name.split('.').pop();
-        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const filePath = `inventory-images/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('inventory')
-          .upload(filePath, imageFile);
-        if (uploadError) throw uploadError;
-
-        const { data: urlData } = supabase.storage
-          .from('inventory')
-          .getPublicUrl(filePath);
-        imageUrl = urlData.publicUrl;
-      }
-
-      const record = {
-        donor_name: formData.donorName.trim(),
-        donor_email: formData.donorEmail.trim() || null,
-        address: formData.address.trim(),
-        phone_number: formData.phoneNumber.trim(),
-        date_accepted: formData.dateAccepted,
-        item_description: formData.itemDescription.trim(),
-        storage_location: formData.storageLocation.trim(),
-      };
-      if (imageUrl !== undefined) record.item_image_url = imageUrl;
-
-      if (editingId) {
-        const { error } = await supabase
-          .from('inventory_items')
-          .update(record)
-          .eq('id', editingId);
-        if (error) throw error;
-        setMessage({ type: 'success', text: 'Item updated successfully!' });
+      let donorId;
+      if (selectedDonor) {
+        donorId = selectedDonor.id;
       } else {
-        const { error } = await supabase
-          .from('inventory_items')
-          .insert([record]);
-        if (error) throw error;
-        setMessage({ type: 'success', text: 'Item added to inventory!' });
+        // Check for existing donor with same name + email + phone before creating
+        const trimName = donorForm.donorName.trim();
+        const trimEmail = donorForm.donorEmail.trim() || null;
+        const trimPhone = donorForm.phoneNumber.trim();
+        let existingQuery = supabase.from('donors').select('id').ilike('donor_name', trimName);
+        if (trimEmail) existingQuery = existingQuery.eq('donor_email', trimEmail);
+        else existingQuery = existingQuery.is('donor_email', null);
+        if (trimPhone) existingQuery = existingQuery.eq('phone_number', trimPhone);
+        else existingQuery = existingQuery.is('phone_number', null);
+        const { data: existingDonors } = await existingQuery.limit(1);
+
+        if (existingDonors && existingDonors.length > 0) {
+          donorId = existingDonors[0].id;
+        } else {
+          const { data: newDonor, error: donorError } = await supabase
+            .from('donors')
+            .insert([{
+              donor_name: trimName,
+              donor_email: trimEmail,
+              address: donorForm.address.trim(),
+              phone_number: trimPhone,
+            }])
+            .select().single();
+          if (donorError) throw donorError;
+          donorId = newDonor.id;
+        }
       }
 
-      resetForm();
+      const { data: donation, error: donError } = await supabase
+        .from('donations')
+        .insert([{ donor_id: donorId, date_accepted: dateAccepted }])
+        .select().single();
+      if (donError) throw donError;
+
+      for (const item of validItems) {
+        // Upload all images (up to 4) for this item
+        const imageUrls = [];
+        const files = imageFiles[item._key] || [];
+        for (const file of files) {
+          const fileExt = file.name.split('.').pop();
+          const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+          const filePath = `inventory-images/${fileName}`;
+          const { error: uploadError } = await supabase.storage.from('inventory').upload(filePath, file);
+          if (uploadError) throw uploadError;
+          const { data: urlData } = supabase.storage.from('inventory').getPublicUrl(filePath);
+          imageUrls.push(urlData.publicUrl);
+        }
+        // Set item_image_url to first image for backward compat / card thumbnail
+        const primaryImageUrl = imageUrls.length > 0 ? imageUrls[0] : null;
+        const { data: insertedItem, error: itemError } = await supabase
+          .from('donation_items')
+          .insert([{ donation_id: donation.id, item_description: item.itemDescription.trim(), storage_location: item.storageLocation.trim(), item_image_url: primaryImageUrl }])
+          .select('id').single();
+        if (itemError) throw itemError;
+        // Insert into item_images table
+        if (imageUrls.length > 0) {
+          const imageRows = imageUrls.map((url, i) => ({ item_id: insertedItem.id, image_url: url, display_order: i }));
+          const { error: imgError } = await supabase.from('item_images').insert(imageRows);
+          if (imgError) console.error('Image insert error:', imgError);
+        }
+      }
+
+      const count = validItems.length;
+      setMessage({ type: 'success', text: `Donation recorded! ${count} item${count > 1 ? 's' : ''} added to inventory.` });
+      resetDonationForm();
     } catch (error) {
       console.error('Submit error:', error);
       setMessage({ type: 'error', text: `Error: ${error.message}` });
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  const handleEdit = (item) => {
-    setFormData({
-      donorName: item.donor_name,
-      donorEmail: item.donor_email || '',
-      address: item.address,
-      phoneNumber: item.phone_number,
-      dateAccepted: item.date_accepted,
-      itemDescription: item.item_description,
-      storageLocation: item.storage_location
-    });
-    setEditingId(item.id);
-    setImagePreview(item.item_image_url || null);
-    setImageFile(null);
-    setTab('add');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleDelete = async (id) => {
+  /* ════════════════════════════════════════════════
+     INVENTORY ACTIONS
+     ════════════════════════════════════════════════ */
+  const handleDeleteItem = async (id) => {
     if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from('inventory_items')
-        .delete()
-        .eq('id', id);
+      const { error } = await supabase.from('donation_items').delete().eq('id', id);
       if (error) throw error;
       setDeleteConfirm(null);
       fetchItems();
+    } catch (err) { console.error('Delete error:', err); }
+  };
+
+  const startEditItem = (item) => {
+    setEditingItem(item.id);
+    setEditItemForm({ itemDescription: item.item_description, storageLocation: item.storage_location });
+  };
+
+  const saveEditItem = async () => {
+    if (!supabase || !editingItem) return;
+    try {
+      const { error } = await supabase.from('donation_items')
+        .update({ item_description: editItemForm.itemDescription.trim(), storage_location: editItemForm.storageLocation.trim() })
+        .eq('id', editingItem);
+      if (error) throw error;
+      setEditingItem(null);
+      fetchItems();
+    } catch (err) { console.error('Edit error:', err); }
+  };
+
+  /* ── donor actions ── */
+  const startEditDonor = (donor) => {
+    setEditingDonor(donor.id);
+    setEditDonorForm({ donorName: donor.donor_name, donorEmail: donor.donor_email || '', address: donor.address, phoneNumber: donor.phone_number });
+  };
+
+  const saveEditDonor = async () => {
+    if (!supabase || !editingDonor) return;
+    try {
+      const { error } = await supabase.from('donors')
+        .update({ donor_name: editDonorForm.donorName.trim(), donor_email: editDonorForm.donorEmail.trim() || null, address: editDonorForm.address.trim(), phone_number: editDonorForm.phoneNumber.trim() })
+        .eq('id', editingDonor);
+      if (error) throw error;
+      setEditingDonor(null);
+      fetchDonors();
+    } catch (err) { console.error('Edit donor error:', err); }
+  };
+
+  const startDonationForDonor = (donor) => {
+    setSelectedDonor(donor);
+    setDonorStep('selected');
+    setTab('donate');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  /* ════════════════════════════════════════════════
+     SHOPIFY ACTIONS
+     ════════════════════════════════════════════════ */
+  const startPublish = (item) => {
+    setPublishingItem(item.id);
+    setPublishForm({ price: item.price || '', title: item.item_description });
+  };
+
+  const cancelPublish = () => {
+    setPublishingItem(null);
+    setPublishForm({ price: '', title: '' });
+  };
+
+  const publishToShopify = async () => {
+    if (!supabase || !publishingItem || !publishForm.price) return;
+    setPublishLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('shopify-publish', {
+        body: {
+          itemId: publishingItem,
+          price: parseFloat(publishForm.price),
+          title: publishForm.title.trim() || undefined,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      setPublishingItem(null);
+      setPublishForm({ price: '', title: '' });
+      fetchItems();
     } catch (err) {
-      console.error('Delete error:', err);
+      console.error('Publish error:', err);
+      setMessage({ type: 'error', text: `Publish failed: ${err.message}` });
+    } finally { setPublishLoading(false); }
+  };
+
+  const unlistFromShopify = async (item) => {
+    if (!supabase || !item.shopify_product_id) return;
+    setUnlistingItem(item.id);
+    try {
+      // Update local status back to in_storage
+      const { error } = await supabase
+        .from('donation_items')
+        .update({
+          status: 'in_storage',
+          shopify_product_id: null,
+          shopify_variant_id: null,
+          price: null,
+        })
+        .eq('id', item.id);
+      if (error) throw error;
+
+      // Note: Optionally delete from Shopify too via another edge function
+      // For now we just unlink it locally
+      setUnlistingItem(null);
+      fetchItems();
+    } catch (err) {
+      console.error('Unlist error:', err);
+      setUnlistingItem(null);
+    }
+  };
+
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case 'listed': return 'Listed';
+      case 'sold': return 'Sold';
+      case 'claimed': return 'Claimed';
+      case 'removed': return 'Removed';
+      default: return 'In Storage';
     }
   };
 
   const toggleSort = (field) => {
-    if (sortField === field) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDir('desc');
-    }
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('desc'); }
   };
 
   /* ─── config warning ─── */
   if (!supabase) {
     return (
-      <div className="app-container">
-        <div className="config-warning">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="48" height="48">
-            <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <h2>Supabase Not Configured</h2>
-          <p>Create a <code>.env</code> file in the project root with your Supabase credentials:</p>
+      <div className="cr-app">
+        <div className="cr-config-warning">
+          <div className="cr-config-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="52" height="52">
+              <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <h2>Connect Your Database</h2>
+          <p>Create a <code>.env</code> file in the project root:</p>
           <pre>{`VITE_SUPABASE_URL=https://your-project.supabase.co\nVITE_SUPABASE_ANON_KEY=your-anon-key`}</pre>
-          <p>See the README for full setup instructions.</p>
+          <p className="cr-config-sub">Run <code>migration.sql</code> to create the donors, donations, and donation_items tables.</p>
         </div>
       </div>
     );
   }
 
-  /* ================================================================== */
-  return (
-    <div className="app-container">
-      {/* ── header ── */}
-      <header className="header-section">
-        <div className="header-content">
-          <h1>Donation Inventory</h1>
-          <p className="subtitle">Track and manage donated items with ease</p>
+  /* ─── auth loading ─── */
+  if (authLoading) {
+    return (
+      <div className="cr-app">
+        <div className="cr-auth-loading">
+          <span className="cr-spinner large"></span>
+          <p>Loading...</p>
         </div>
-        <div className="header-decoration" aria-hidden="true"></div>
+      </div>
+    );
+  }
+
+  /* ─── login gate ─── */
+  if (!session) {
+    return <LoginScreen />;
+  }
+
+  return (
+    <div className="cr-app">
+      {/* ═══ HERO ═══ */}
+      <header className="cr-hero">
+        <div className="cr-hero-bg">
+          <img src={HERO_IMAGE} alt="" aria-hidden="true" />
+          <div className="cr-hero-overlay"></div>
+        </div>
+        <div className="cr-hero-content">
+          <div className="cr-hero-badge">Campus Sustainability</div>
+          <h1>Campus <span>Reclaimed</span></h1>
+          <p>Give campus items a second life. Track donations, manage inventory, and keep the cycle going.</p>
+        </div>
+        <button className="cr-sign-out" onClick={handleSignOut} title="Sign out">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
+            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Sign Out
+        </button>
       </header>
 
-      {/* ── tabs ── */}
-      <nav className="tab-bar" role="tablist">
-        <button
-          role="tab"
-          aria-selected={tab === 'add'}
-          className={`tab-btn ${tab === 'add' ? 'active' : ''}`}
-          onClick={() => setTab('add')}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
+      {/* ═══ CATEGORY STRIP ═══ */}
+      <section className="cr-categories" aria-label="Common donation categories">
+        <div className="cr-categories-scroll">
+          {CATEGORY_IMAGES.map((cat, i) => (
+            <div key={i} className="cr-cat-card" style={{ animationDelay: `${i * 0.08}s` }}>
+              <img src={cat.src} alt={cat.alt} loading="lazy" />
+              <span>{cat.label}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ═══ NAV TABS ═══ */}
+      <nav className="cr-nav three" role="tablist">
+        <button role="tab" aria-selected={tab === 'donate'}
+          className={`cr-nav-btn ${tab === 'donate' ? 'active' : ''}`}
+          onClick={() => setTab('donate')}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
             <path d="M12 5v14m7-7H5" strokeLinecap="round" />
           </svg>
-          {editingId ? 'Edit Item' : 'Add Item'}
+          New Donation
         </button>
-        <button
-          role="tab"
-          aria-selected={tab === 'inventory'}
-          className={`tab-btn ${tab === 'inventory' ? 'active' : ''}`}
-          onClick={() => setTab('inventory')}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
-            <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" />
+        <button role="tab" aria-selected={tab === 'inventory'}
+          className={`cr-nav-btn ${tab === 'inventory' ? 'active' : ''}`}
+          onClick={() => setTab('inventory')}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
+            <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4M4 7l8 4M4 7v10l8 4m0-10v10" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           Inventory
-          {stats.total > 0 && <span className="badge">{stats.total}</span>}
+          {stats.total > 0 && <span className="cr-count">{stats.total}</span>}
+        </button>
+        <button role="tab" aria-selected={tab === 'donors'}
+          className={`cr-nav-btn ${tab === 'donors' ? 'active' : ''}`}
+          onClick={() => setTab('donors')}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Donors
         </button>
       </nav>
 
-      {/* ════════════════ ADD / EDIT TAB ════════════════ */}
-      {tab === 'add' && (
-        <div className="form-container">
-          {editingId && (
-            <div className="editing-banner">
-              Editing item — <button type="button" className="link-btn" onClick={resetForm}>cancel</button>
-            </div>
-          )}
-          <form onSubmit={handleSubmit} className="inventory-form">
-            {/* Donor section */}
-            <fieldset className="form-section">
-              <legend className="section-title">Donor Information</legend>
-              <div className="form-grid">
-                <div className="form-group">
-                  <label htmlFor="donorName">Donor Name *</label>
-                  <input type="text" id="donorName" name="donorName" value={formData.donorName}
-                    onChange={handleInputChange} required placeholder="Jane Smith" />
-                </div>
+      {/* ═══ TAB: NEW DONATION ═══ */}
+      {tab === 'donate' && (
+        <main className="cr-main">
+          <div className="cr-form-wrapper">
+            <form onSubmit={handleSubmit} className="cr-form">
 
-                <div className="form-group">
-                  <label htmlFor="donorEmail">Donor Email</label>
-                  <input type="email" id="donorEmail" name="donorEmail" value={formData.donorEmail}
-                    onChange={handleInputChange} placeholder="jane@example.com" />
-                  <span className="field-hint">Required for 30-day email notifications</span>
-                </div>
+              {/* Step 1: Donor */}
+              <fieldset className="cr-fieldset">
+                <legend><span className="cr-legend-num">01</span> Donor</legend>
 
-                <div className="form-group full-width">
-                  <label htmlFor="address">Address *</label>
-                  <textarea id="address" name="address" value={formData.address}
-                    onChange={handleInputChange} required placeholder="123 Main Street, City, State ZIP" rows="2" />
-                </div>
+                {donorStep === 'search' && (
+                  <div className="cr-donor-search-section">
+                    <p className="cr-section-desc">Search for a returning donor or create a new account.</p>
+                    <div className="cr-donor-search-box">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
+                        <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" strokeLinecap="round" />
+                      </svg>
+                      <input type="text" placeholder="Search by name, email, or phone…" value={donorSearch}
+                        onChange={e => setDonorSearch(e.target.value)} autoFocus />
+                      {donorSearching && <span className="cr-spinner sm"></span>}
+                    </div>
 
-                <div className="form-group">
-                  <label htmlFor="phoneNumber">Phone Number *</label>
-                  <input type="tel" id="phoneNumber" name="phoneNumber" value={formData.phoneNumber}
-                    onChange={handleInputChange} required placeholder="(555) 123-4567" />
-                </div>
+                    {donorResults.length > 0 && (
+                      <ul className="cr-donor-results">
+                        {donorResults.map(d => (
+                          <li key={d.id}>
+                            <button type="button" className="cr-donor-result" onClick={() => selectExistingDonor(d)}>
+                              <div className="cr-donor-avatar">{d.donor_name.charAt(0).toUpperCase()}</div>
+                              <div className="cr-donor-result-info">
+                                <strong>{d.donor_name}</strong>
+                                <span>{d.donor_email || d.phone_number}</span>
+                              </div>
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="16" height="16">
+                                <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
 
-                <div className="form-group">
-                  <label htmlFor="dateAccepted">Date Accepted *</label>
-                  <input type="date" id="dateAccepted" name="dateAccepted" value={formData.dateAccepted}
-                    onChange={handleInputChange} required />
-                </div>
-              </div>
-            </fieldset>
+                    {donorSearch.trim().length >= 2 && !donorSearching && donorResults.length === 0 && (
+                      <div className="cr-no-results"><p>No donors found matching &ldquo;{donorSearch}&rdquo;</p></div>
+                    )}
 
-            {/* Item section */}
-            <fieldset className="form-section">
-              <legend className="section-title">Item Details</legend>
-              <div className="form-grid">
-                <div className="form-group full-width">
-                  <label htmlFor="itemDescription">Item Description *</label>
-                  <textarea id="itemDescription" name="itemDescription" value={formData.itemDescription}
-                    onChange={handleInputChange} required placeholder="Detailed description of the donated item…" rows="4" />
-                </div>
-
-                <div className="form-group full-width">
-                  <label htmlFor="storageLocation">Storage Location *</label>
-                  <input type="text" id="storageLocation" name="storageLocation" value={formData.storageLocation}
-                    onChange={handleInputChange} required placeholder="Shelf A-12, Warehouse 3" />
-                </div>
-
-                <div className="form-group full-width image-upload-group">
-                  <label htmlFor="itemImage">Item Photo</label>
-                  <div className="image-upload-area">
-                    <input type="file" id="itemImage" accept="image/*" onChange={handleImageChange} className="file-input" />
-                    <label htmlFor="itemImage" className="file-label">
-                      {imagePreview ? (
-                        <div className="image-preview">
-                          <img src={imagePreview} alt="Preview" />
-                          <div className="image-overlay"><span>Change Photo</span></div>
-                        </div>
-                      ) : (
-                        <div className="upload-prompt">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                            <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                          <span>Click to upload photo</span>
-                          <span className="field-hint">JPEG, PNG — max 10 MB</span>
-                        </div>
-                      )}
-                    </label>
+                    <button type="button" className="cr-new-donor-btn" onClick={startNewDonor}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
+                        <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M8.5 11a4 4 0 100-8 4 4 0 000 8zM20 8v6M23 11h-6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      Create New Donor Account
+                    </button>
                   </div>
-                </div>
-              </div>
-            </fieldset>
+                )}
 
-            {message.text && (
-              <div className={`message ${message.type}`} role="alert">{message.text}</div>
-            )}
+                {donorStep === 'selected' && selectedDonor && (
+                  <div className="cr-selected-donor">
+                    <div className="cr-selected-donor-card">
+                      <div className="cr-donor-avatar lg">{selectedDonor.donor_name.charAt(0).toUpperCase()}</div>
+                      <div className="cr-selected-donor-info">
+                        <strong>{selectedDonor.donor_name}</strong>
+                        {selectedDonor.donor_email && <span>{selectedDonor.donor_email}</span>}
+                        <span>{selectedDonor.phone_number}</span>
+                        <span className="cr-donor-address">{selectedDonor.address}</span>
+                      </div>
+                      <button type="button" className="cr-change-donor" onClick={changeDonor}>Change</button>
+                    </div>
+                  </div>
+                )}
 
-            <div className="form-actions">
-              {editingId && (
-                <button type="button" className="cancel-button" onClick={resetForm}>Cancel</button>
+                {donorStep === 'new' && (
+                  <div className="cr-new-donor-form">
+                    <div className="cr-inline-back">
+                      <button type="button" className="cr-link" onClick={() => { setDonorStep('search'); setDonorForm({ ...EMPTY_DONOR }); }}>
+                        &larr; Back to search
+                      </button>
+                    </div>
+                    <div className="cr-field-grid">
+                      <div className="cr-field">
+                        <label htmlFor="donorName">Full Name <span className="cr-req">*</span></label>
+                        <input type="text" id="donorName" name="donorName" value={donorForm.donorName}
+                          onChange={handleDonorFormChange} required placeholder="Jane Smith" />
+                      </div>
+                      <div className="cr-field">
+                        <label htmlFor="donorEmail">Email Address</label>
+                        <input type="email" id="donorEmail" name="donorEmail" value={donorForm.donorEmail}
+                          onChange={handleDonorFormChange} placeholder="jane@university.edu" />
+                        <span className="cr-hint">For 30-day pickup notifications</span>
+                      </div>
+                      <div className="cr-field cr-span-2">
+                        <label htmlFor="address">Address <span className="cr-req">*</span></label>
+                        <textarea id="address" name="address" value={donorForm.address}
+                          onChange={handleDonorFormChange} required placeholder="123 University Ave, City, State ZIP" rows="2" />
+                      </div>
+                      <div className="cr-field">
+                        <label htmlFor="phoneNumber">Phone <span className="cr-req">*</span></label>
+                        <input type="tel" id="phoneNumber" name="phoneNumber" value={donorForm.phoneNumber}
+                          onChange={handleDonorFormChange} required placeholder="(555) 123-4567" />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </fieldset>
+
+              {/* Step 2 + 3: Date & Items (shown once donor is chosen) */}
+              {(donorStep === 'selected' || donorStep === 'new') && (
+                <>
+                  <fieldset className="cr-fieldset">
+                    <legend><span className="cr-legend-num">02</span> Donation Details</legend>
+                    <div className="cr-field-grid">
+                      <div className="cr-field">
+                        <label htmlFor="dateAccepted">Date Accepted <span className="cr-req">*</span></label>
+                        <input type="date" id="dateAccepted" value={dateAccepted}
+                          onChange={e => setDateAccepted(e.target.value)} required />
+                      </div>
+                    </div>
+                  </fieldset>
+
+                  <fieldset className="cr-fieldset">
+                    <legend>
+                      <span className="cr-legend-num">03</span> Items
+                      <span className="cr-item-count">{donationItems.length} item{donationItems.length !== 1 ? 's' : ''}</span>
+                    </legend>
+
+                    <div className="cr-items-list">
+                      {donationItems.map((item, idx) => (
+                        <div key={item._key} className="cr-item-entry">
+                          <div className="cr-item-entry-header">
+                            <span className="cr-item-num">Item {idx + 1}</span>
+                            {donationItems.length > 1 && (
+                              <button type="button" className="cr-remove-item" onClick={() => removeItem(item._key)}>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="14" height="14">
+                                  <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                          <div className="cr-field-grid">
+                            <div className="cr-field cr-span-2">
+                              <label>Description <span className="cr-req">*</span></label>
+                              <textarea value={item.itemDescription}
+                                onChange={e => handleItemChange(item._key, 'itemDescription', e.target.value)}
+                                required placeholder="Describe the item — type, condition, dimensions, color, brand…" rows="3" />
+                            </div>
+                            <div className="cr-field">
+                              <label>Storage Location <span className="cr-req">*</span></label>
+                              <input type="text" value={item.storageLocation}
+                                onChange={e => handleItemChange(item._key, 'storageLocation', e.target.value)}
+                                required placeholder="Building A, Shelf 12" />
+                            </div>
+                            <div className="cr-field">
+                              <label>Photos <span className="cr-hint">(up to 4)</span></label>
+                              <div className="cr-multi-upload">
+                                {(imagePreviews[item._key] || []).map((src, i) => (
+                                  <div key={i} className="cr-upload-thumb">
+                                    <img src={src} alt={`Preview ${i + 1}`} />
+                                    <button type="button" className="cr-upload-remove" onClick={() => removeItemImage(item._key, i)}
+                                      aria-label="Remove photo">&times;</button>
+                                  </div>
+                                ))}
+                                {(imagePreviews[item._key] || []).length < 4 && (
+                                  <div className="cr-upload-zone compact add-more">
+                                    <input type="file" id={`img-${item._key}`} accept="image/*" multiple
+                                      onChange={e => handleItemImage(item._key, e)} className="cr-file-input" />
+                                    <label htmlFor={`img-${item._key}`} className="cr-file-label compact">
+                                      <div className="cr-upload-prompt compact">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
+                                          <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                        <span className="cr-upload-text">
+                                          {(imagePreviews[item._key] || []).length === 0 ? 'Add photos' : 'Add more'}
+                                        </span>
+                                      </div>
+                                    </label>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button type="button" className="cr-add-item-btn" onClick={addItem}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
+                        <path d="M12 5v14m7-7H5" strokeLinecap="round" />
+                      </svg>
+                      Add Another Item
+                    </button>
+                  </fieldset>
+
+                  {message.text && (
+                    <div className={`cr-toast ${message.type}`} role="alert">
+                      {message.type === 'success' && (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
+                          <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                      {message.type === 'error' && (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
+                          <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                      {message.text}
+                    </div>
+                  )}
+
+                  <div className="cr-form-actions">
+                    <button type="button" className="cr-btn-secondary" onClick={resetDonationForm}>Cancel</button>
+                    <button type="submit" className="cr-btn-primary" disabled={loading}>
+                      {loading ? <><span className="cr-spinner"></span>Saving…</> : (
+                        <>Record Donation{donationItems.filter(i => i.itemDescription.trim()).length > 1 &&
+                          ` (${donationItems.filter(i => i.itemDescription.trim()).length} items)`}</>
+                      )}
+                    </button>
+                  </div>
+                </>
               )}
-              <button type="submit" className="submit-button" disabled={loading}>
-                {loading ? (
-                  <><span className="spinner" aria-hidden="true"></span>Processing…</>
-                ) : editingId ? 'Save Changes' : 'Add to Inventory'}
-              </button>
-            </div>
-          </form>
-        </div>
+            </form>
+          </div>
+        </main>
       )}
 
-      {/* ════════════════ INVENTORY TAB ════════════════ */}
+      {/* ═══ TAB: INVENTORY ═══ */}
       {tab === 'inventory' && (
-        <div className="inventory-panel">
-          {/* stats row */}
-          <div className="stats-row">
-            <div className="stat-card">
-              <span className="stat-value">{stats.total}</span>
-              <span className="stat-label">Total Items</span>
+        <main className="cr-main">
+          <div className="cr-stats-grid four">
+            <div className="cr-stat">
+              <div className="cr-stat-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
+                  <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4M4 7l8 4M4 7v10l8 4m0-10v10" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <span className="cr-stat-num">{stats.inStorage || 0}</span>
+              <span className="cr-stat-label">In Storage</span>
             </div>
-            <div className="stat-card">
-              <span className="stat-value">{stats.thisMonth}</span>
-              <span className="stat-label">This Month</span>
+            <div className="cr-stat">
+              <div className="cr-stat-icon blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
+                  <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <span className="cr-stat-num">{stats.listed || 0}</span>
+              <span className="cr-stat-label">Listed on Store</span>
             </div>
-            <div className="stat-card accent">
-              <span className="stat-value">{stats.pendingNotify}</span>
-              <span className="stat-label">Pending Notification</span>
+            <div className="cr-stat">
+              <div className="cr-stat-icon green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
+                  <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <span className="cr-stat-num">{stats.sold || 0}</span>
+              <span className="cr-stat-label">Sold</span>
+            </div>
+            <div className="cr-stat">
+              <div className="cr-stat-icon amber">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
+                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <span className="cr-stat-num">{stats.donors}</span>
+              <span className="cr-stat-label">Active Donors</span>
             </div>
           </div>
 
-          {/* search & sort */}
-          <div className="list-toolbar">
-            <div className="search-box">
+          <div className="cr-toolbar">
+            <div className="cr-search">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
                 <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" strokeLinecap="round" />
               </svg>
-              <input type="text" placeholder="Search by donor, item, or location…" value={searchQuery}
+              <input type="text" placeholder="Search items, donors, locations…" value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)} />
-              {searchQuery && (
-                <button className="clear-search" onClick={() => setSearchQuery('')} aria-label="Clear search">&times;</button>
-              )}
+              {searchQuery && <button className="cr-clear" onClick={() => setSearchQuery('')}>&times;</button>}
             </div>
-            <div className="sort-controls">
-              <span className="sort-label">Sort:</span>
-              {[
-                ['created_at', 'Newest'],
-                ['date_accepted', 'Date Accepted'],
-                ['donor_name', 'Donor'],
-              ].map(([field, label]) => (
-                <button key={field} className={`sort-btn ${sortField === field ? 'active' : ''}`}
-                  onClick={() => toggleSort(field)}>
-                  {label}
-                  {sortField === field && (
-                    <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>
-                  )}
+            <div className="cr-sort-group">
+              {[['created_at', 'Recent'], ['date_accepted', 'Date'], ['donor_name', 'Donor']].map(([f, l]) => (
+                <button key={f} className={`cr-sort-btn ${sortField === f ? 'on' : ''}`}
+                  onClick={() => toggleSort(f)}>
+                  {l}{sortField === f && <span>{sortDir === 'asc' ? '↑' : '↓'}</span>}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* items list */}
+          <div className="cr-status-filter">
+            {[
+              ['all', 'All', stats.total],
+              ['in_storage', 'In Storage', stats.inStorage],
+              ['listed', 'Listed', stats.listed],
+              ['sold', 'Sold', stats.sold],
+            ].map(([key, label, count]) => (
+              <button key={key}
+                className={`cr-status-btn ${statusFilter === key ? 'on' : ''} ${key}`}
+                onClick={() => setStatusFilter(key)}>
+                {label}
+                {count > 0 && <span className="cr-status-count">{count}</span>}
+              </button>
+            ))}
+          </div>
+
           {listLoading ? (
-            <div className="list-loading"><span className="spinner large" aria-hidden="true"></span><p>Loading inventory…</p></div>
+            <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading inventory…</p></div>
           ) : items.length === 0 ? (
-            <div className="empty-state">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="56" height="56">
-                <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4M4 7l8 4M4 7v10l8 4m0-10v10" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <h3>{searchQuery ? 'No matching items' : 'No items yet'}</h3>
-              <p>{searchQuery ? 'Try a different search term.' : 'Add your first donation using the Add Item tab.'}</p>
+            <div className="cr-empty">
+              <img src="https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=400&h=250&fit=crop" alt="Empty room" className="cr-empty-img" />
+              <h3>{searchQuery ? 'No matching items' : 'Your inventory is empty'}</h3>
+              <p>{searchQuery ? 'Try a different search term.' : 'Start by adding your first donation.'}</p>
+              {!searchQuery && <button className="cr-btn-primary sm" onClick={() => setTab('donate')}>Add First Donation</button>}
             </div>
           ) : (
-            <ul className="items-list">
+            <ul className="cr-list">
               {items.map(item => {
-                const days = daysSince(item.date_accepted);
-                const isExpanded = expandedItem === item.id;
+                const donor = item.donation?.donor;
+                const dateAcc = item.donation?.date_accepted;
+                const days = daysSince(dateAcc);
+                const isExp = expandedItem === item.id;
+                const isEditing = editingItem === item.id;
+
                 return (
-                  <li key={item.id} className={`item-card ${isExpanded ? 'expanded' : ''}`}>
-                    <button className="item-summary" onClick={() => setExpandedItem(isExpanded ? null : item.id)}
-                      aria-expanded={isExpanded}>
-                      <div className="item-main">
-                        {item.item_image_url && (
-                          <img src={item.item_image_url} alt="" className="item-thumb" loading="lazy" />
-                        )}
-                        <div className="item-info">
-                          <strong className="item-desc">{item.item_description}</strong>
-                          <span className="item-donor">from {item.donor_name}</span>
+                  <li key={item.id} className={`cr-card ${isExp ? 'expanded' : ''}`}>
+                    <button className="cr-card-header" onClick={() => setExpandedItem(isExp ? null : item.id)} aria-expanded={isExp}>
+                      <div className="cr-card-left">
+                        {(() => {
+                          const images = (item.item_images || []).sort((a, b) => a.display_order - b.display_order);
+                          const thumbUrl = images.length > 0 ? images[0].image_url : item.item_image_url;
+                          const imageCount = images.length || (item.item_image_url ? 1 : 0);
+                          return thumbUrl ? (
+                            <div className="cr-card-thumb-wrap">
+                              <img src={thumbUrl} alt="" className="cr-card-thumb" loading="lazy" />
+                              {imageCount > 1 && <span className="cr-thumb-count">{imageCount}</span>}
+                            </div>
+                          ) : (
+                            <div className="cr-card-thumb placeholder">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="22" height="22">
+                                <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4M4 7l8 4M4 7v10l8 4m0-10v10" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </div>
+                          );
+                        })()}
+                        <div className="cr-card-info">
+                          <strong>{item.item_description}</strong>
+                          <span className="cr-card-donor">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="14" height="14">
+                              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            {donor?.donor_name || 'Unknown'}
+                          </span>
                         </div>
                       </div>
-                      <div className="item-meta">
-                        <span className="item-location">{item.storage_location}</span>
-                        <span className={`item-age ${days >= 30 ? 'warn' : ''}`}>{days}d ago</span>
-                        {item.notification_sent && <span className="notified-badge" title="Notification sent">✉</span>}
-                        <svg className="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
+                      <div className="cr-card-right">
+                        <span className={`cr-tag status ${item.status || 'in_storage'}`}>{getStatusLabel(item.status)}</span>
+                        {item.price && <span className="cr-tag price">${parseFloat(item.price).toFixed(2)}</span>}
+                        <span className="cr-tag location">{item.storage_location}</span>
+                        <span className={`cr-tag age ${days >= 30 ? 'warn' : ''}`}>{days}d</span>
+                        {item.notification_sent && <span className="cr-tag sent" title="Notification sent">Sent</span>}
+                        <svg className={`cr-chevron ${isExp ? 'open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
                           <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
                       </div>
                     </button>
 
-                    {isExpanded && (
-                      <div className="item-detail">
-                        <div className="detail-grid">
-                          <div><span className="detail-label">Address</span><span>{item.address}</span></div>
-                          <div><span className="detail-label">Phone</span><span>{item.phone_number}</span></div>
-                          {item.donor_email && <div><span className="detail-label">Email</span><span>{item.donor_email}</span></div>}
-                          <div><span className="detail-label">Date Accepted</span><span>{formatDate(item.date_accepted)}</span></div>
-                          <div><span className="detail-label">Notification</span>
-                            <span>{item.notification_sent ? `Sent ${formatDate(item.notification_sent.split('T')[0])}` : item.donor_email ? 'Pending' : 'No email on file'}</span>
+                    {isExp && (
+                      <div className="cr-card-detail">
+                        {isEditing ? (
+                          <div className="cr-inline-edit">
+                            <div className="cr-field-grid">
+                              <div className="cr-field cr-span-2">
+                                <label>Description</label>
+                                <textarea value={editItemForm.itemDescription}
+                                  onChange={e => setEditItemForm(p => ({ ...p, itemDescription: e.target.value }))} rows="3" />
+                              </div>
+                              <div className="cr-field cr-span-2">
+                                <label>Storage Location</label>
+                                <input type="text" value={editItemForm.storageLocation}
+                                  onChange={e => setEditItemForm(p => ({ ...p, storageLocation: e.target.value }))} />
+                              </div>
+                            </div>
+                            <div className="cr-detail-actions">
+                              <button className="cr-act edit" onClick={saveEditItem}>Save</button>
+                              <button className="cr-act" onClick={() => setEditingItem(null)}>Cancel</button>
+                            </div>
                           </div>
-                        </div>
-                        {item.item_image_url && (
-                          <div className="detail-image">
-                            <img src={item.item_image_url} alt={item.item_description} loading="lazy" />
-                          </div>
+                        ) : (
+                          <>
+                            <div className="cr-detail-grid">
+                              <div><span className="cr-detail-label">Donor</span><span>{donor?.donor_name}</span></div>
+                              <div><span className="cr-detail-label">Address</span><span>{donor?.address}</span></div>
+                              <div><span className="cr-detail-label">Phone</span><span>{donor?.phone_number}</span></div>
+                              {donor?.donor_email && <div><span className="cr-detail-label">Email</span><span>{donor?.donor_email}</span></div>}
+                              <div><span className="cr-detail-label">Date Accepted</span><span>{formatDate(dateAcc)}</span></div>
+                              <div><span className="cr-detail-label">Notification</span>
+                                <span>{item.notification_sent ? `Sent ${formatDate(item.notification_sent.split('T')[0])}` : donor?.donor_email ? 'Pending' : 'No email on file'}</span>
+                              </div>
+                            </div>
+                            {(() => {
+                              const images = (item.item_images || []).sort((a, b) => a.display_order - b.display_order);
+                              const allUrls = images.length > 0
+                                ? images.map(img => img.image_url)
+                                : (item.item_image_url ? [item.item_image_url] : []);
+                              return allUrls.length > 0 && (
+                                <div className={`cr-detail-photos ${allUrls.length === 1 ? 'single' : ''}`}>
+                                  {allUrls.map((url, i) => (
+                                    <img key={i} src={url} alt={`${item.item_description} photo ${i + 1}`} loading="lazy" />
+                                  ))}
+                                </div>
+                              );
+                            })()}
+
+                            {/* Shopify publish form (inline) */}
+                            {publishingItem === item.id && (
+                              <div className="cr-publish-form">
+                                <h4 className="cr-publish-title">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
+                                    <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                  Publish to Shopify Store
+                                </h4>
+                                <div className="cr-field-grid">
+                                  <div className="cr-field">
+                                    <label>Listing Title</label>
+                                    <input type="text" value={publishForm.title}
+                                      onChange={e => setPublishForm(p => ({ ...p, title: e.target.value }))}
+                                      placeholder={item.item_description} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Price <span className="cr-req">*</span></label>
+                                    <div className="cr-price-input">
+                                      <span className="cr-price-prefix">$</span>
+                                      <input type="number" step="0.01" min="0" value={publishForm.price}
+                                        onChange={e => setPublishForm(p => ({ ...p, price: e.target.value }))}
+                                        placeholder="0.00" required />
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="cr-detail-actions">
+                                  <button className="cr-act publish" onClick={publishToShopify} disabled={publishLoading || !publishForm.price}>
+                                    {publishLoading ? 'Publishing…' : 'Publish to Store'}
+                                  </button>
+                                  <button className="cr-act" onClick={cancelPublish}>Cancel</button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Shopify listing info (for listed items) */}
+                            {item.status === 'listed' && item.shopify_product_id && publishingItem !== item.id && (
+                              <div className="cr-shopify-info">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="16" height="16">
+                                  <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                                Listed on Shopify &middot; ${parseFloat(item.price).toFixed(2)}
+                                {item.shopify_product_id && <span className="cr-shopify-id"> &middot; Product #{item.shopify_product_id}</span>}
+                              </div>
+                            )}
+
+                            {/* Sold info */}
+                            {item.status === 'sold' && (
+                              <div className="cr-sold-info">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="16" height="16">
+                                  <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                                Sold{item.sold_at ? ` on ${formatDate(item.sold_at.split('T')[0])}` : ''}
+                                {item.price && ` for $${parseFloat(item.price).toFixed(2)}`}
+                                {item.shopify_order_id && <span> &middot; Order #{item.shopify_order_id}</span>}
+                              </div>
+                            )}
+
+                            <div className="cr-detail-actions">
+                              {/* Publish button — only for in_storage items */}
+                              {(item.status === 'in_storage' || !item.status) && publishingItem !== item.id && (
+                                <button className="cr-act publish" onClick={() => startPublish(item)}>
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
+                                    <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                  Publish to Store
+                                </button>
+                              )}
+
+                              {/* Unlist button — only for listed items */}
+                              {item.status === 'listed' && (
+                                <button className="cr-act danger" onClick={() => unlistFromShopify(item)}
+                                  disabled={unlistingItem === item.id}>
+                                  {unlistingItem === item.id ? 'Unlisting…' : 'Unlist from Store'}
+                                </button>
+                              )}
+
+                              {/* Edit — not available for sold items */}
+                              {item.status !== 'sold' && (
+                                <button className="cr-act edit" onClick={() => startEditItem(item)}>
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
+                                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" />
+                                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                  Edit
+                                </button>
+                              )}
+
+                              {deleteConfirm === item.id ? (
+                                <span className="cr-confirm-delete">
+                                  Delete this item?
+                                  <button className="cr-act danger" onClick={() => handleDeleteItem(item.id)}>Yes, delete</button>
+                                  <button className="cr-act" onClick={() => setDeleteConfirm(null)}>Cancel</button>
+                                </span>
+                              ) : (
+                                item.status !== 'sold' && (
+                                  <button className="cr-act danger" onClick={() => setDeleteConfirm(item.id)}>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
+                                      <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                    Delete
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </>
                         )}
-                        <div className="detail-actions">
-                          <button className="action-btn edit" onClick={() => handleEdit(item)}>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="16" height="16">
-                              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" />
-                              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                            Edit
-                          </button>
-                          {deleteConfirm === item.id ? (
-                            <span className="confirm-delete">
-                              Delete this item?
-                              <button className="action-btn danger" onClick={() => handleDelete(item.id)}>Yes</button>
-                              <button className="action-btn" onClick={() => setDeleteConfirm(null)}>No</button>
-                            </span>
-                          ) : (
-                            <button className="action-btn danger" onClick={() => setDeleteConfirm(item.id)}>
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="16" height="16">
-                                <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                              Delete
-                            </button>
-                          )}
-                        </div>
                       </div>
                     )}
                   </li>
@@ -523,8 +1261,157 @@ function App() {
               })}
             </ul>
           )}
-        </div>
+        </main>
       )}
+
+      {/* ═══ TAB: DONORS ═══ */}
+      {tab === 'donors' && (
+        <main className="cr-main">
+          <div className="cr-toolbar">
+            <div className="cr-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
+                <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" strokeLinecap="round" />
+              </svg>
+              <input type="text" placeholder="Search donors…" value={donorSearchQuery}
+                onChange={e => setDonorSearchQuery(e.target.value)} />
+              {donorSearchQuery && <button className="cr-clear" onClick={() => setDonorSearchQuery('')}>&times;</button>}
+            </div>
+          </div>
+
+          {donorsLoading ? (
+            <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading donors…</p></div>
+          ) : donors.length === 0 ? (
+            <div className="cr-empty">
+              <h3>{donorSearchQuery ? 'No matching donors' : 'No donors yet'}</h3>
+              <p>{donorSearchQuery ? 'Try a different search term.' : 'Donors are created when you record a donation.'}</p>
+            </div>
+          ) : (
+            <ul className="cr-list">
+              {donors.map(donor => {
+                const totalDonations = donor.donations?.length || 0;
+                const totalItems = donor.donations?.reduce((sum, d) => sum + (d.donation_items?.length || 0), 0) || 0;
+                const isExp = expandedDonor === donor.id;
+                const isEditing = editingDonor === donor.id;
+
+                return (
+                  <li key={donor.id} className={`cr-card ${isExp ? 'expanded' : ''}`}>
+                    <button className="cr-card-header" onClick={() => {
+                      setExpandedDonor(isExp ? null : donor.id);
+                      if (!isExp) fetchDonorDonations(donor.id);
+                    }} aria-expanded={isExp}>
+                      <div className="cr-card-left">
+                        <div className="cr-donor-avatar">{donor.donor_name.charAt(0).toUpperCase()}</div>
+                        <div className="cr-card-info">
+                          <strong>{donor.donor_name}</strong>
+                          <span className="cr-card-donor">{donor.donor_email || donor.phone_number}</span>
+                        </div>
+                      </div>
+                      <div className="cr-card-right">
+                        <span className="cr-tag location">{totalDonations} visit{totalDonations !== 1 ? 's' : ''}</span>
+                        <span className="cr-tag age">{totalItems} item{totalItems !== 1 ? 's' : ''}</span>
+                        <svg className={`cr-chevron ${isExp ? 'open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
+                          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                    </button>
+
+                    {isExp && (
+                      <div className="cr-card-detail">
+                        {isEditing ? (
+                          <div className="cr-inline-edit">
+                            <div className="cr-field-grid">
+                              <div className="cr-field"><label>Name</label>
+                                <input type="text" value={editDonorForm.donorName}
+                                  onChange={e => setEditDonorForm(p => ({ ...p, donorName: e.target.value }))} />
+                              </div>
+                              <div className="cr-field"><label>Email</label>
+                                <input type="email" value={editDonorForm.donorEmail}
+                                  onChange={e => setEditDonorForm(p => ({ ...p, donorEmail: e.target.value }))} />
+                              </div>
+                              <div className="cr-field cr-span-2"><label>Address</label>
+                                <textarea value={editDonorForm.address} rows="2"
+                                  onChange={e => setEditDonorForm(p => ({ ...p, address: e.target.value }))} />
+                              </div>
+                              <div className="cr-field"><label>Phone</label>
+                                <input type="tel" value={editDonorForm.phoneNumber}
+                                  onChange={e => setEditDonorForm(p => ({ ...p, phoneNumber: formatPhone(e.target.value) }))} />
+                              </div>
+                            </div>
+                            <div className="cr-detail-actions">
+                              <button className="cr-act edit" onClick={saveEditDonor}>Save</button>
+                              <button className="cr-act" onClick={() => setEditingDonor(null)}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="cr-detail-grid">
+                              <div><span className="cr-detail-label">Address</span><span>{donor.address}</span></div>
+                              <div><span className="cr-detail-label">Phone</span><span>{donor.phone_number}</span></div>
+                              {donor.donor_email && <div><span className="cr-detail-label">Email</span><span>{donor.donor_email}</span></div>}
+                              <div><span className="cr-detail-label">Member Since</span><span>{formatDate(donor.created_at?.split('T')[0])}</span></div>
+                            </div>
+
+                            {donorDonations[donor.id] && (
+                              <div className="cr-donation-history">
+                                <h4 className="cr-history-title">Donation History</h4>
+                                {donorDonations[donor.id].length === 0 ? (
+                                  <p className="cr-history-empty">No donations recorded yet.</p>
+                                ) : (
+                                  <div className="cr-history-list">
+                                    {donorDonations[donor.id].map(donation => (
+                                      <div key={donation.id} className="cr-history-entry">
+                                        <div className="cr-history-date">
+                                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="14" height="14">
+                                            <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" />
+                                          </svg>
+                                          {formatDate(donation.date_accepted)}
+                                        </div>
+                                        <ul className="cr-history-items">
+                                          {(donation.donation_items || []).map(di => (
+                                            <li key={di.id}>
+                                              <span className="cr-history-item-desc">{di.item_description}</span>
+                                              <span className="cr-tag location sm">{di.storage_location}</span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="cr-detail-actions">
+                              <button className="cr-act edit" onClick={() => startDonationForDonor(donor)}>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
+                                  <path d="M12 5v14m7-7H5" strokeLinecap="round" />
+                                </svg>
+                                New Donation
+                              </button>
+                              <button className="cr-act edit" onClick={() => startEditDonor(donor)}>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
+                                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" />
+                                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                                Edit Info
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </main>
+      )}
+
+      {/* ═══ FOOTER ═══ */}
+      <footer className="cr-footer">
+        <p>Campus Reclaimed &middot; Reduce, Reuse, Reclaim</p>
+      </footer>
     </div>
   );
 }
