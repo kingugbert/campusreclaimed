@@ -106,7 +106,9 @@ function buildBodyHtml(item: Record<string, unknown>): string {
   if (meta.material)       details.push(`<strong>Material:</strong> ${meta.material}`);
   if (meta.style)          details.push(`<strong>Style:</strong> ${meta.style}`);
   if (meta.dimensions)     details.push(`<strong>Dimensions:</strong> ${meta.dimensions}`);
+  if (meta.weight)         details.push(`<strong>Weight:</strong> ${meta.weight}`);
   if (meta.condition)      details.push(`<strong>Condition:</strong> ${meta.condition}`);
+  if (meta.shipping)       details.push(`<strong>Shipping:</strong> ${meta.shipping === 'pickup' ? 'Local Pickup Only' : 'Shipping Required'}`);
   if (meta.notes)          details.push(`<strong>Notes:</strong> ${meta.notes}`);
   if (item.agreement_type) details.push(`<strong>Type:</strong> ${item.agreement_type === 'consignment' ? 'Consignment' : 'Donation'}`);
   if (details.length > 0) lines.push(`<ul>${details.map(d => `<li>${d}</li>`).join('')}</ul>`);
@@ -151,6 +153,7 @@ function buildMetafields(item: Record<string, unknown>): unknown[] {
     add('material',       meta.material || ''),
     add('style',          meta.style || ''),
     add('dimensions',     meta.dimensions || ''),
+    add('weight',         meta.weight || ''),
     add('notes',          meta.notes || ''),
   ].filter(Boolean);
 }
@@ -159,11 +162,39 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { itemId, price, title } = await req.json();
+    const body = await req.json();
+
+    // ── Handle delete action ──
+    if (body.action === 'delete' && body.productId) {
+      const shopifyStore = Deno.env.get("SHOPIFY_STORE_DOMAIN");
+      if (!shopifyStore) return new Response(JSON.stringify({ error: "SHOPIFY_STORE_DOMAIN not configured" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      const accessToken = await getShopifyAccessToken(shopifyStore);
+      console.log(`Attempting to delete Shopify product: ${body.productId}`);
+
+      const deleteRes = await fetch(
+        `https://${shopifyStore}/admin/api/2024-10/products/${body.productId}.json`,
+        { method: "DELETE", headers: { "X-Shopify-Access-Token": accessToken } }
+      );
+
+      console.log(`Shopify DELETE response status: ${deleteRes.status}`);
+
+      if (deleteRes.ok || deleteRes.status === 404) {
+        console.log(`Successfully deleted Shopify product ${body.productId}`);
+        return new Response(JSON.stringify({ success: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } else {
+        const err = await deleteRes.text();
+        console.error(`Shopify delete FAILED for ${body.productId}: status=${deleteRes.status} body=${err}`);
+        return new Response(JSON.stringify({ error: "Shopify delete failed", details: err, status: deleteRes.status }), { status: deleteRes.status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    // ── Handle publish action (existing) ──
+    const { itemId, price, title } = body;
     if (!itemId || !price) return new Response(JSON.stringify({ error: "itemId and price are required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const { data: item, error: fetchError } = await supabase.from("donation_items").select(`*, donation:donations!inner(date_accepted, donor:donors!inner(donor_name))`).eq("id", itemId).single();
+    const { data: item, error: fetchError } = await supabase.from("donation_items").select(`*, item_images(image_url, display_order), donation:donations!inner(date_accepted, donor:donors!inner(donor_name))`).eq("id", itemId).single();
 
     if (fetchError || !item) return new Response(JSON.stringify({ error: "Item not found", details: fetchError?.message }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     if (item.status === "listed" && item.shopify_product_id) return new Response(JSON.stringify({ error: "Item is already listed on Shopify" }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -173,6 +204,14 @@ serve(async (req) => {
 
     const accessToken = await getShopifyAccessToken(shopifyStore);
 
+    // Build image list — prefer item_images table (multi-photo), fall back to item_image_url
+    const itemImages = (item.item_images || [])
+      .sort((a: Record<string, unknown>, b: Record<string, unknown>) => (a.display_order as number) - (b.display_order as number))
+      .map((img: Record<string, unknown>) => ({ src: img.image_url }));
+    const images = itemImages.length > 0
+      ? itemImages
+      : item.item_image_url ? [{ src: item.item_image_url }] : [];
+
     const shopifyPayload = {
       product: {
         title: title || item.item_description,
@@ -181,8 +220,8 @@ serve(async (req) => {
         product_type: item.category || "Donated Item",
         tags: buildTags(item).join(', '),
         metafields: buildMetafields(item),
-        variants: [{ price: price.toString(), inventory_quantity: 1, inventory_management: "shopify", requires_shipping: true }],
-        ...(item.item_image_url ? { images: [{ src: item.item_image_url }] } : {}),
+        variants: [{ price: price.toString(), inventory_quantity: 1, inventory_management: "shopify", requires_shipping: item.metadata?.shipping !== 'pickup' }],
+        ...(images.length > 0 ? { images } : {}),
       },
     };
 
@@ -203,6 +242,41 @@ serve(async (req) => {
     const shopifyData = await shopifyRes.json();
     const shopifyProductId = shopifyData.product.id.toString();
     const shopifyVariantId = shopifyData.product.variants[0].id.toString();
+
+    console.log("Product created:", shopifyProductId);
+
+    // ── Publish to Shop channel ──
+    // Look up the Shop publication ID and add the product to it
+    try {
+      const pubRes = await fetch(
+        `https://${shopifyStore}/admin/api/2024-10/publications.json`,
+        { headers: { "X-Shopify-Access-Token": accessToken } }
+      );
+      if (pubRes.ok) {
+        const pubData = await pubRes.json();
+        const shopPub = pubData.publications?.find(
+          (p: Record<string, unknown>) =>
+            (p.name as string)?.toLowerCase().includes('shop') &&
+            !(p.name as string)?.toLowerCase().includes('shopify')
+        );
+        if (shopPub) {
+          const listingRes = await fetch(
+            `https://${shopifyStore}/admin/api/2024-10/publications/${shopPub.id}/product_publications.json`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+              body: JSON.stringify({ product_publication: { product_id: shopifyProductId } }),
+            }
+          );
+          if (listingRes.ok) console.log(`Published to Shop channel (publication: ${shopPub.id})`);
+          else console.warn("Shop channel publish failed:", await listingRes.text());
+        } else {
+          console.log("Shop publication not found — skipping");
+        }
+      }
+    } catch (shopErr) {
+      console.warn("Shop channel error (non-fatal):", shopErr.message);
+    }
 
     // Add to collections (Option B)
     const targetCollections = getTargetCollections(item);

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from './supabaseClient';
 import './App.css';
 import AgreementPage from './pages/AgreementPage';
+import ToteRequestPage from './pages/ToteRequestPage';
 
 /* ─── helpers ─── */
 const formatPhone = (value) => {
@@ -1015,6 +1016,9 @@ function App() {
   /* ─── public routes (no auth required) ─── */
   if (window.location.pathname === '/agreement') {
     return <AgreementPage />;
+  }
+  if (window.location.pathname === '/request-tote') {
+    return <ToteRequestPage />;
   }
 
   /* ─── auth loading ─── */

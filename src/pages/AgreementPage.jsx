@@ -1,13 +1,8 @@
 import { useState, useRef } from 'react'
 import SignatureCanvas from 'react-signature-canvas'
 import jsPDF from 'jspdf'
-import { createClient } from '@supabase/supabase-js'
-
-// Uses your existing Vite env vars — adjust if your supabase client is imported differently
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-)
+const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 const CONSIGNMENT_TERMS = [
   {
@@ -519,43 +514,51 @@ export default function AgreementPage() {
     setError('')
 
     try {
-      // Generate PDF
+      // ── Generate PDF and convert to base64 ──
       const pdfBuffer = buildPDF()
-      const pdfBlob   = new Blob([pdfBuffer], { type: 'application/pdf' })
-      const fileName  = `agreement_${form.last}_${form.first}_${Date.now()}.pdf`
+      const bytes     = new Uint8Array(pdfBuffer)
+      let binary = ''
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+      const pdf_base64 = btoa(binary)
+      const file_name  = `agreement_${form.last}_${form.first}_${Date.now()}.pdf`
 
-      // Upload to Supabase Storage bucket "agreements"
-      const { error: storageErr } = await supabase.storage
-        .from('agreements')
-        .upload(fileName, pdfBlob, { contentType: 'application/pdf', upsert: false })
-      if (storageErr) throw storageErr
+      // ── Capture signature ──
+      const signature_data = sigRef.current?.getTrimmedCanvas()?.toDataURL('image/png') || null
 
-      const { data: urlData } = supabase.storage
-        .from('agreements')
-        .getPublicUrl(fileName)
+      // ── POST to submit-agreement Edge Function (uses service role — bypasses RLS) ──
+      const res = await fetch(
+        `${SUPABASE_URL}/functions/v1/submit-agreement`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            pdf_base64,
+            file_name,
+            form: {
+              first_name:       form.first,
+              mi:               form.mi || null,
+              last_name:        form.last,
+              address:          form.address || null,
+              city:             form.city || null,
+              state_abbr:       form.state || null,
+              zip:              form.zip || null,
+              email:            form.email,
+              phone:            form.phone || null,
+              agreement_type:   form.agreementType,
+              consignment_acks: isConsignment ? form.initials : null,
+              venmo_handle:     isConsignment ? form.venmo : null,
+              print_name:       form.printName,
+              signature_data,
+            },
+          }),
+        }
+      )
 
-      // Insert record
-      const { error: dbErr } = await supabase
-        .from('participation_agreements')
-        .insert({
-          first_name:       form.first,
-          mi:               form.mi || null,
-          last_name:        form.last,
-          address:          form.address || null,
-          city:             form.city || null,
-          state_abbr:       form.state || null,
-          zip:              form.zip || null,
-          email:            form.email,
-          phone:            form.phone || null,
-          agreement_type:   form.agreementType,
-          consignment_acks: isConsignment ? form.initials : null,
-          venmo_handle:     isConsignment ? form.venmo : null,
-          print_name:       form.printName,
-          signature_data:   sigRef.current?.getTrimmedCanvas()?.toDataURL('image/png'),
-          pdf_url:          urlData?.publicUrl || null,
-          submitted_at:     new Date().toISOString(),
-        })
-      if (dbErr) throw dbErr
+      const data = await res.json()
+      if (!res.ok || data.error) throw new Error(data.error || `Server error ${res.status}`)
 
       setSubmitted(true)
     } catch (err) {
