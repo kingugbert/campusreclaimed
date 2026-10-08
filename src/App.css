@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Lora:ital,wght@0,400;0,600;1,400&display=swap');
 
 :root {
   --green-900: #0f2921;
@@ -1478,4 +1478,334 @@ body {
 .cr-toast.success {
   background: var(--green-50); color: var(--green-700);
   border: 1px solid rgba(90,154,130,.2);
+}
+
+/* ════════════════════════════
+   PARTICIPATION BADGE
+   ════════════════════════════ */
+
+.cr-participation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cr-participation-badge.lg {
+  font-size: .82rem;
+  padding: 5px 12px;
+}
+.cr-badge-icon {
+  font-size: .75em;
+  line-height: 1;
+}
+
+/* Agreement row inside expanded donor detail */
+.cr-agreement-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--cream);
+  border-radius: var(--radius-xs);
+  margin-bottom: 14px;
+  border: 1px solid var(--border-light);
+  flex-wrap: wrap;
+}
+.cr-agreement-complete {
+  font-size: .8rem;
+  color: var(--green-700);
+  font-weight: 600;
+}
+.cr-send-agreement {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+}
+
+/* Hide the badge on very small screens in the collapsed card header */
+@media (max-width: 480px) {
+  .cr-participation-badge:not(.lg) {
+    display: none;
+  }
+}
+
+/* ════════════════════════════
+   CATEGORY PILLS (item entry)
+   ════════════════════════════ */
+
+.cr-category-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cr-cat-pill {
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1.5px solid var(--border);
+  background: var(--white);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: .82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.cr-cat-pill:hover {
+  border-color: var(--green-600);
+  color: var(--green-700);
+  background: var(--green-50);
+}
+
+.cr-cat-pill.active {
+  background: var(--green-800);
+  border-color: var(--green-800);
+  color: var(--white);
+  font-weight: 600;
+}
+
+/* ════════════════════════════
+   ITEM METADATA SECTION
+   ════════════════════════════ */
+
+.cr-meta-section {
+  background: var(--green-50);
+  border: 1px solid var(--green-100);
+  border-radius: var(--radius-sm);
+  padding: 16px 18px 18px;
+  margin-top: 4px;
+}
+
+.cr-meta-title {
+  font-size: .8rem;
+  font-weight: 700;
+  color: var(--green-800);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: 14px;
+}
+
+.cr-meta-title .cr-hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+/* ════════════════════════════
+   AI ANALYSIS BADGES
+   ════════════════════════════ */
+
+.cr-ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .03em;
+  vertical-align: middle;
+}
+.cr-ai-badge.analyzing {
+  background: var(--amber-light);
+  color: var(--amber);
+  border: 1px solid #e8d090;
+}
+.cr-ai-badge.done {
+  background: var(--green-50);
+  color: var(--green-700);
+  border: 1px solid var(--green-100);
+}
+.cr-ai-badge.error {
+  background: var(--terra-light);
+  color: var(--terra-dark);
+  border: 1px solid #e8c4b8;
+}
+
+/* Re-analyze button on first thumbnail */
+.cr-reanalyze {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(26, 60, 52, 0.82);
+  color: #fff;
+  font-size: .75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background .15s;
+}
+.cr-reanalyze:hover {
+  background: var(--green-800);
+}
+
+/* ════════════════════════════
+   AI ANALYSIS BADGES
+   ════════════════════════════ */
+.cr-ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .03em;
+  vertical-align: middle;
+}
+.cr-ai-badge.analyzing { background: var(--amber-light); color: var(--amber); border: 1px solid #e8d090; }
+.cr-ai-badge.done      { background: var(--green-50); color: var(--green-700); border: 1px solid var(--green-100); }
+.cr-ai-badge.error     { background: var(--terra-light); color: var(--terra-dark); border: 1px solid #e8c4b8; }
+
+.cr-reanalyze {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(26, 60, 52, 0.82);
+  color: #fff;
+  font-size: .75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s;
+}
+.cr-reanalyze:hover { background: var(--green-800); }
+
+/* Selected donor card — right side with badge + change button */
+.cr-selected-donor-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ════════════════════════════
+   AGREEMENT TYPE TOGGLE (item entry form)
+   ════════════════════════════ */
+
+.cr-agreement-toggle {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.cr-agreement-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 16px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--border);
+  background: var(--white);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: .9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+}
+.cr-agreement-btn:hover {
+  border-color: var(--green-500);
+  color: var(--green-700);
+}
+.cr-agreement-btn.donation.active {
+  background: var(--green-50);
+  border-color: var(--green-600);
+  color: var(--green-800);
+}
+.cr-agreement-btn.consignment.active {
+  background: #e8f0f8;
+  border-color: #6a9ec8;
+  color: #1a2e4a;
+}
+.cr-agreement-icon { font-size: 1.1rem; }
+
+/* ════════════════════════════
+   AGREEMENT TYPE TAGS (inventory cards)
+   ════════════════════════════ */
+
+.cr-agr-tag {
+  font-size: .72rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 20px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cr-agr-tag.donation {
+  background: var(--green-50);
+  color: var(--green-700);
+  border-color: var(--green-100);
+}
+.cr-agr-tag.consignment {
+  background: #e8f0f8;
+  color: #1a2e4a;
+  border-color: #b8d0e8;
+}
+
+/* Agreement type in expanded detail grid */
+.cr-agr-inline { font-weight: 600; }
+.cr-agr-inline.donation    { color: var(--green-700); }
+.cr-agr-inline.consignment { color: #1a3a5c; }
+.cr-agr-inline.none        { color: var(--text-muted); }
+
+/* ════════════════════════════
+   PUBLISH CHECKLIST
+   ════════════════════════════ */
+
+.cr-publish-checklist {
+  background: var(--cream);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xs);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.cr-check-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: .82rem;
+  color: var(--text-secondary);
+}
+.cr-check-row.ok .cr-check-icon  { color: var(--green-600); font-weight: 700; }
+.cr-check-row.warn .cr-check-icon { color: var(--terra); font-weight: 700; }
+.cr-check-row.warn { color: var(--terra-dark); }
+.cr-check-hint {
+  font-size: .78rem;
+  color: var(--terra-dark);
+  background: var(--terra-light);
+  border-radius: var(--radius-xs);
+  padding: 6px 8px;
+  margin-top: 4px;
 }

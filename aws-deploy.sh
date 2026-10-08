@@ -39,6 +39,14 @@ warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 err()  { echo -e "${RED}✗${NC} $1"; exit 1; }
 info() { echo -e "${BLUE}→${NC} $1"; }
 
+# ── Identity guard: always deploy as doyler, never as the seminar user ──
+export AWS_PROFILE=default
+CALLER=$(aws sts get-caller-identity --query Arn --output text 2>/dev/null) \
+  || err "AWS credentials for profile 'default' aren't working"
+[[ "$CALLER" == *":user/doyler" ]] \
+  || err "Wrong AWS identity: ${CALLER} (expected user/doyler)"
+log "Deploying as ${CALLER}"
+
 # ── Validate config ──
 validate_config() {
   if [ -z "$AWS_ACCOUNT_ID" ]; then

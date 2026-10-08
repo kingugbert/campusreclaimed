@@ -27,3 +27,13 @@ node_modules/.vite/
 # Zip archives
 *.zip
 supa_password
+supabase/.temp/
+# keys and secrets
+*key*
+.env*
+# local tool state and backups
+supabase/.temp/
+*.bu
+*.new
+*.0326
+~$*

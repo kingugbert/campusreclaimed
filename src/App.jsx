@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import './App.css';
+import AgreementPage from './pages/AgreementPage';
 
 /* ─── helpers ─── */
 const formatPhone = (value) => {
@@ -30,13 +31,60 @@ const CATEGORY_IMAGES = [
   { label: 'Electronics', src: 'https://images.unsplash.com/photo-1498049794561-7780e7231661?w=600&h=400&fit=crop', alt: 'Electronics' },
   { label: 'Bedding', src: 'https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?w=600&h=400&fit=crop', alt: 'Bedroom furnishings' },
   { label: 'Books', src: 'https://images.unsplash.com/photo-1512820790803-83ca734da794?w=600&h=400&fit=crop', alt: 'Stack of books' },
+  { label: 'Headboards', src: 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?w=600&h=400&fit=crop', alt: 'Bed headboard' },
 ];
 
 const HERO_IMAGE = 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=1200&h=500&fit=crop';
 
 /* ─── constants ─── */
 const EMPTY_DONOR = { donorName: '', donorEmail: '', address: '', phoneNumber: '' };
-const EMPTY_ITEM = { itemDescription: '', storageLocation: '' };
+const EMPTY_ITEM = { itemDescription: '', storageLocation: '', category: '', metadata: {}, agreementType: '' };
+
+/* ─── Shopify-aligned category metadata options ─── */
+const CLOTHING_SUBCATEGORIES = [
+  'Tops & Shirts', 'Bottoms (Pants/Jeans/Shorts)', 'Dresses', 'Outerwear (Coats/Jackets)',
+  'Activewear', 'Sweaters & Hoodies', 'Suits & Blazers', 'Sleepwear & Loungewear',
+  'Swimwear', 'Underwear & Socks', 'One-Pieces & Jumpsuits', 'Skirts',
+];
+const CLOTHING_GENDERS  = ['Women', 'Men', 'Unisex', 'Girls', 'Boys'];
+const CLOTHING_AGE_GROUPS = ['Adults', 'Teens', 'Kids', 'Toddlers', 'Babies'];
+const CLOTHING_SIZES    = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', '4XL', '5XL', '6XL', '0', '2', '4', '6', '8', '10', '12', '14', '16', '18', '20', '24', '25', '26', '27', '28', '29', '30', '31', '32', 'One Size', 'Other'];
+const CLOTHING_FABRICS  = [
+  'Cotton', 'Polyester', 'Wool', 'Silk', 'Denim', 'Linen', 'Rayon/Viscose',
+  'Nylon', 'Cashmere', 'Fleece', 'Acrylic', 'Spandex/Lycra', 'Blend', 'Other',
+];
+const CLOTHING_CONDITIONS = ['New with tags', 'Like New', 'Good', 'Fair', 'Worn'];
+
+const FURNITURE_SUBCATEGORIES = [
+  'Chair', 'Sofa / Loveseat', 'Sectional', 'Table (Dining)', 'Table (Coffee/End)',
+  'Desk', 'Dresser / Chest', 'Bed Frame', 'Bookcase / Shelving', 'Cabinet / Storage',
+  'Nightstand', 'Ottoman', 'Bench', 'Office Chair', 'Other',
+];
+const FURNITURE_MATERIALS = [
+  'Wood (Solid)', 'Wood (Engineered/MDF)', 'Metal', 'Upholstered (Fabric)',
+  'Upholstered (Leather)', 'Upholstered (Faux Leather)', 'Upholstered (Velvet)',
+  'Wicker / Rattan', 'Glass', 'Plastic', 'Mixed Materials',
+];
+const FURNITURE_STYLES = [
+  'Modern', 'Mid-Century Modern', 'Traditional', 'Industrial', 'Rustic / Farmhouse',
+  'Scandinavian / Minimalist', 'Bohemian', 'Coastal', 'Contemporary', 'Other',
+];
+const FURNITURE_CONDITIONS = ['Like New', 'Good — minor wear', 'Fair — visible wear', 'Poor — needs repair'];
+const OTHER_CONDITIONS  = ['Like New', 'Good — minor wear', 'Fair — visible wear', 'Poor — needs repair'];
+const HEADBOARD_TYPES = [
+  'Panel / Flat', 'Tufted', 'Slatted / Wood', 'Upholstered', 'Bookcase / Storage',
+  'Metal / Wrought Iron', 'Arched', 'Floating / Wall-Mounted', 'Other',
+];
+const HEADBOARD_MATERIALS = [
+  'Wood (Solid)', 'Wood (Engineered/MDF)', 'Metal', 'Upholstered (Fabric)',
+  'Upholstered (Leather)', 'Upholstered (Faux Leather)', 'Upholstered (Velvet)',
+  'Wicker / Rattan', 'Mixed Materials',
+];
+const HEADBOARD_STYLES = [
+  'Modern', 'Mid-Century Modern', 'Traditional', 'Industrial', 'Rustic / Farmhouse',
+  'Scandinavian / Minimalist', 'Bohemian', 'Coastal', 'Contemporary', 'Other',
+];
+const HEADBOARD_CONDITIONS = ['Like New', 'Good — minor wear', 'Fair — visible wear', 'Poor — needs repair'];
 
 /* ================================================================== */
 /* ─── LOGIN SCREEN ─── */
@@ -119,6 +167,26 @@ function LoginScreen({ onLogin }) {
 }
 
 /* ================================================================== */
+/* ─── PARTICIPATION BADGE ─── */
+function ParticipationBadge({ status, large = false }) {
+  const cfg = {
+    pending:     { label: 'Pending Agreement', color: '#7a4800', bg: '#fff3e0', border: '#f5c48a' },
+    donation:    { label: 'Donation',          color: '#1a3c34', bg: '#dceee6', border: '#5a9a82' },
+    consignment: { label: 'Consignment',       color: '#1a2e4a', bg: '#dce8f5', border: '#6a9ec8' },
+  };
+  const key = status && cfg[status] ? status : 'pending';
+  const { label, color, bg, border } = cfg[key];
+  const icon = key === 'pending' ? '⏳' : key === 'donation' ? '🎁' : '🔄';
+  return (
+    <span className={`cr-participation-badge ${key} ${large ? 'lg' : ''}`}
+      style={{ color, background: bg, borderColor: border }}>
+      <span className="cr-badge-icon">{icon}</span>
+      {label}
+    </span>
+  );
+}
+
+/* ================================================================== */
 function App() {
   /* ── auth ── */
   const [session, setSession] = useState(null);
@@ -163,14 +231,13 @@ function App() {
   const searchTimeout = useRef(null);
 
   /* ── inventory state ── */
-  const [items, setItems] = useState([]);
+  const [rawItems, setRawItems] = useState([]);
   const [listLoading, setListLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortField, setSortField] = useState('created_at');
   const [sortDir, setSortDir] = useState('desc');
   const [expandedItem, setExpandedItem] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-  const [stats, setStats] = useState({ total: 0, thisMonth: 0, donors: 0, pendingNotify: 0 });
 
   /* ── donors tab state ── */
   const [donors, setDonors] = useState([]);
@@ -191,9 +258,29 @@ function App() {
   const [publishForm, setPublishForm] = useState({ price: '', title: '' });
   const [publishLoading, setPublishLoading] = useState(false);
   const [unlistingItem, setUnlistingItem] = useState(null);
+  const [priceSuggestion, setPriceSuggestion] = useState(null);   // { suggested_price, price_range, rationale, floor_price }
+  const [priceLoading, setPriceLoading] = useState(false);
+
+  /* ── 30-day notification emails ── */
+  const [notifySending, setNotifySending] = useState(false);
+  const [notifyResult, setNotifyResult] = useState(null);   // { type: 'success'|'error', text }
 
   // Waiver tracking
   const [donorWaivers, setDonorWaivers] = useState({}); // { donorId: [{ id, waiver_url, signed_at }, ...] }
+
+  /* ── agreements sub-tab state ── */
+  const [donorSubTab, setDonorSubTab]             = useState('donors');
+  const [agreements, setAgreements]               = useState([]);
+  const [agreementsLoading, setAgreementsLoading] = useState(false);
+
+  /* ── payouts sub-tab state ── */
+  const [payouts, setPayouts]                     = useState([]);
+  const [payoutsLoading, setPayoutsLoading]       = useState(false);
+  const [payoutFilter, setPayoutFilter]           = useState('unpaid'); // 'all' | 'unpaid' | 'paid'
+  const [savingPayout, setSavingPayout]           = useState(null); // item id being saved
+  const [agreementSearch, setAgreementSearch]     = useState('');
+  const [agreementTypeFilter, setAgreementTypeFilter] = useState('all');
+  const [aiStatus, setAiStatus] = useState({}); // { itemKey: 'analyzing' | 'done' | 'error' }
 
   /* ════════════════════════════════════════════════
      DONOR SEARCH (for donation form)
@@ -232,62 +319,73 @@ function App() {
     try {
       const { data, error } = await supabase
         .from('donation_items')
-        .select(`*, item_images(id, image_url, display_order), donation:donations!inner(id, date_accepted, notes, donor:donors!inner(id, donor_name, donor_email, address, phone_number))`)
-        .order('created_at', { ascending: sortDir === 'asc' });
+        .select(`*, item_images(id, image_url, display_order), donation:donations!inner(id, date_accepted, notes, donor:donors!inner(id, donor_name, donor_email, address, phone_number, participation_status))`)
+        .order('created_at', { ascending: false });
       if (error) throw error;
-
-      let filtered = data || [];
-
-      // Status filter
-      if (statusFilter !== 'all') {
-        filtered = filtered.filter(item => item.status === statusFilter);
-      }
-
-      if (searchQuery.trim()) {
-        const q = searchQuery.trim().toLowerCase();
-        filtered = filtered.filter(item =>
-          item.item_description?.toLowerCase().includes(q) ||
-          item.storage_location?.toLowerCase().includes(q) ||
-          item.donation?.donor?.donor_name?.toLowerCase().includes(q) ||
-          item.donation?.donor?.donor_email?.toLowerCase().includes(q)
-        );
-      }
-
-      if (sortField === 'donor_name') {
-        filtered.sort((a, b) => {
-          const aName = a.donation?.donor?.donor_name || '';
-          const bName = b.donation?.donor?.donor_name || '';
-          return sortDir === 'asc' ? aName.localeCompare(bName) : bName.localeCompare(aName);
-        });
-      } else if (sortField === 'date_accepted') {
-        filtered.sort((a, b) => {
-          const aD = a.donation?.date_accepted || '';
-          const bD = b.donation?.date_accepted || '';
-          return sortDir === 'asc' ? aD.localeCompare(bD) : bD.localeCompare(aD);
-        });
-      }
-
-      setItems(filtered);
-
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-      const uniqueDonors = new Set((data || []).map(i => i.donation?.donor?.id).filter(Boolean));
-      setStats({
-        total: (data || []).length,
-        thisMonth: (data || []).filter(i => i.donation?.date_accepted >= monthStart).length,
-        donors: uniqueDonors.size,
-        pendingNotify: (data || []).filter(i =>
-          !i.notification_sent && daysSince(i.donation?.date_accepted) >= 30 && i.donation?.donor?.donor_email
-        ).length,
-        inStorage: (data || []).filter(i => (i.status || 'in_storage') === 'in_storage').length,
-        listed: (data || []).filter(i => i.status === 'listed').length,
-        sold: (data || []).filter(i => i.status === 'sold').length,
-      });
+      setRawItems(data || []);
     } catch (err) { console.error('Fetch error:', err); }
     finally { setListLoading(false); }
-  }, [searchQuery, sortField, sortDir, statusFilter]);
+  }, []);
 
   useEffect(() => { if (tab === 'inventory') fetchItems(); }, [tab, fetchItems]);
+
+  /* ── derived: filtered + sorted inventory view (client-side, no refetch per keystroke) ── */
+  const items = useMemo(() => {
+    let filtered = rawItems;
+
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(item => (item.status || 'in_storage') === statusFilter);
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      filtered = filtered.filter(item =>
+        item.item_description?.toLowerCase().includes(q) ||
+        item.storage_location?.toLowerCase().includes(q) ||
+        item.donation?.donor?.donor_name?.toLowerCase().includes(q) ||
+        item.donation?.donor?.donor_email?.toLowerCase().includes(q)
+      );
+    }
+
+    const sorted = [...filtered];
+    if (sortField === 'donor_name') {
+      sorted.sort((a, b) => {
+        const aName = a.donation?.donor?.donor_name || '';
+        const bName = b.donation?.donor?.donor_name || '';
+        return sortDir === 'asc' ? aName.localeCompare(bName) : bName.localeCompare(aName);
+      });
+    } else if (sortField === 'date_accepted') {
+      sorted.sort((a, b) => {
+        const aD = a.donation?.date_accepted || '';
+        const bD = b.donation?.date_accepted || '';
+        return sortDir === 'asc' ? aD.localeCompare(bD) : bD.localeCompare(aD);
+      });
+    } else {
+      sorted.sort((a, b) => {
+        const aC = a.created_at || '';
+        const bC = b.created_at || '';
+        return sortDir === 'asc' ? aC.localeCompare(bC) : bC.localeCompare(aC);
+      });
+    }
+    return sorted;
+  }, [rawItems, searchQuery, statusFilter, sortField, sortDir]);
+
+  const stats = useMemo(() => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const uniqueDonors = new Set(rawItems.map(i => i.donation?.donor?.id).filter(Boolean));
+    return {
+      total: rawItems.length,
+      thisMonth: rawItems.filter(i => i.donation?.date_accepted >= monthStart).length,
+      donors: uniqueDonors.size,
+      pendingNotify: rawItems.filter(i =>
+        !i.notification_sent && daysSince(i.donation?.date_accepted) >= 30 && i.donation?.donor?.donor_email
+      ).length,
+      inStorage: rawItems.filter(i => (i.status || 'in_storage') === 'in_storage').length,
+      listed: rawItems.filter(i => i.status === 'listed').length,
+      sold: rawItems.filter(i => i.status === 'sold').length,
+    };
+  }, [rawItems]);
 
   /* ════════════════════════════════════════════════
      DONORS LIST FETCH
@@ -327,6 +425,135 @@ function App() {
   }, [donorSearchQuery]);
 
   useEffect(() => { if (tab === 'donors') fetchDonors(); }, [tab, fetchDonors]);
+
+  /* ── fetch participation agreements ── */
+  const fetchAgreements = useCallback(async () => {
+    if (!supabase) return;
+    setAgreementsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('participation_agreements')
+        .select('*')
+        .order('submitted_at', { ascending: false });
+      if (error) throw error;
+      setAgreements(data || []);
+    } catch (err) { console.error('Fetch agreements error:', err); }
+    finally { setAgreementsLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'donors' && donorSubTab === 'agreements') fetchAgreements();
+  }, [tab, donorSubTab, fetchAgreements]);
+
+  /* ── fetch payouts (sold consignment items with donor + venmo) ── */
+  const fetchPayouts = useCallback(async () => {
+    if (!supabase) return;
+    setPayoutsLoading(true);
+    try {
+      // Fetch all sold items
+      const { data: soldItems, error: itemsErr } = await supabase
+        .from('donation_items')
+        .select(`
+          id, item_description, shopify_payout, payout_percentage,
+          payout_paid, payout_paid_date, payout_override, sold_at, buyer_name,
+          agreement_type, price,
+          donation:donations!inner(
+            donor:donors!inner(id, donor_name, donor_email)
+          )
+        `)
+        .eq('status', 'sold')
+        .eq('agreement_type', 'consignment')
+        .order('sold_at', { ascending: false });
+      if (itemsErr) throw itemsErr;
+
+      // Fetch all participation agreements to get Venmo handles
+      const { data: agmts } = await supabase
+        .from('participation_agreements')
+        .select('first_name, last_name, email, venmo_handle')
+        .eq('agreement_type', 'consignment');
+
+      // Build a Venmo lookup by email and name
+      const venmoByEmail = {};
+      const venmoByName  = {};
+      (agmts || []).forEach(a => {
+        const name = `${a.first_name} ${a.last_name}`.toLowerCase().trim();
+        if (a.email)        venmoByEmail[a.email.toLowerCase()] = a.venmo_handle;
+        if (name)           venmoByName[name]                   = a.venmo_handle;
+      });
+
+      // Attach Venmo to each sold item
+      const enriched = (soldItems || []).map(item => {
+        const donor = item.donation?.donor;
+        const email = donor?.donor_email?.toLowerCase();
+        const name  = donor?.donor_name?.toLowerCase().trim();
+        const venmo = (email && venmoByEmail[email]) || (name && venmoByName[name]) || null;
+        return { ...item, venmo_handle: venmo };
+      });
+
+      setPayouts(enriched);
+    } catch (err) { console.error('Fetch payouts error:', err); }
+    finally { setPayoutsLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'donors' && donorSubTab === 'payouts') fetchPayouts();
+  }, [tab, donorSubTab, fetchPayouts]);
+
+  /* ── save payout changes (percentage, paid status, paid date) ── */
+  const savePayoutRecord = async (itemId, updates) => {
+    if (!supabase) return;
+    setSavingPayout(itemId);
+    try {
+      const { error } = await supabase
+        .from('donation_items')
+        .update(updates)
+        .eq('id', itemId);
+      if (error) throw error;
+      setPayouts(prev => prev.map(p => p.id === itemId ? { ...p, ...updates } : p));
+    } catch (err) { console.error('Save payout error:', err); }
+    finally { setSavingPayout(null); }
+  };
+
+  /* ── export payouts to CSV ── */
+  const exportPayoutsCSV = () => {
+    const headers = [
+      'Donor Name', 'Email', 'Venmo Handle', 'Item Description',
+      'Sold Date', 'Buyer', 'Sale Amount', 'Consignor %',
+      'Calculated Payout', 'Override Payout', 'Effective Payout',
+      'Paid', 'Paid Date'
+    ];
+    const rows = payouts.map(p => {
+      const donor      = p.donation?.donor;
+      const saleAmt    = parseFloat(p.shopify_payout || p.price || 0);
+      const pct        = parseFloat(p.payout_percentage || 20);
+      const calculated = (saleAmt * pct / 100).toFixed(2);
+      const override   = p.payout_override != null ? parseFloat(p.payout_override).toFixed(2) : '';
+      const effective  = p.payout_override != null ? parseFloat(p.payout_override).toFixed(2) : calculated;
+      return [
+        donor?.donor_name || '',
+        donor?.donor_email || '',
+        p.venmo_handle || '',
+        p.item_description || '',
+        p.sold_at ? p.sold_at.split('T')[0] : '',
+        p.buyer_name || '',
+        saleAmt.toFixed(2),
+        pct + '%',
+        calculated,
+        override,
+        effective,
+        p.payout_paid ? 'Yes' : 'No',
+        p.payout_paid_date || '',
+      ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
+    });
+    const csv  = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `campus-reclaimed-payouts-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   /* ── fetch donations for a specific donor ── */
   const fetchDonorDonations = async (donorId) => {
@@ -377,6 +604,41 @@ function App() {
     ));
   };
 
+  const handleMetaChange = (key, field, value) => {
+    setDonationItems(prev => prev.map(item =>
+      item._key === key ? { ...item, metadata: { ...item.metadata, [field]: value } } : item
+    ));
+  };
+
+  /* ════════════════════════════════════════════════
+     AI IMAGE ANALYSIS
+     ════════════════════════════════════════════════ */
+  const analyzeItemImage = async (itemKey, dataUrl) => {
+    setAiStatus(prev => ({ ...prev, [itemKey]: 'analyzing' }));
+    try {
+      const base64 = dataUrl.split(',')[1];
+      const mediaType = dataUrl.split(';')[0].split(':')[1] || 'image/jpeg';
+      const { data, error } = await supabase.functions.invoke('analyze-item', {
+        body: { base64, mediaType }
+      });
+      if (error) throw error;
+      setDonationItems(prev => prev.map(item => {
+        if (item._key !== itemKey) return item;
+        return {
+          ...item,
+          // Staff-entered values always win over AI suggestions
+          category: item.category || data.category,
+          itemDescription: item.itemDescription.trim() || data.description || item.itemDescription,
+          metadata: { ...(data.metadata || {}), ...item.metadata },
+        };
+      }));
+      setAiStatus(prev => ({ ...prev, [itemKey]: 'done' }));
+    } catch (err) {
+      console.error('AI analysis error:', err);
+      setAiStatus(prev => ({ ...prev, [itemKey]: 'error' }));
+    }
+  };
+
   const addItem = () => {
     setDonationItems(prev => [...prev, { ...EMPTY_ITEM, _key: Date.now() }]);
   };
@@ -399,12 +661,15 @@ function App() {
       if (file.size > 10 * 1024 * 1024) { setMessage({ type: 'error', text: 'Each image must be under 10 MB.' }); return; }
     }
     setImageFiles(prev => ({ ...prev, [key]: [...(prev[key] || []), ...toAdd] }));
-    toAdd.forEach(file => {
+    const isFirstPhoto = existing.length === 0;
+    toAdd.forEach((file, idx) => {
       const reader = new FileReader();
-      reader.onloadend = () => setImagePreviews(prev => ({ ...prev, [key]: [...(prev[key] || []), reader.result] }));
+      reader.onloadend = () => {
+        setImagePreviews(prev => ({ ...prev, [key]: [...(prev[key] || []), reader.result] }));
+        if (isFirstPhoto && idx === 0) analyzeItemImage(key, reader.result);
+      };
       reader.readAsDataURL(file);
     });
-    // Reset the input so the same file can be re-selected
     e.target.value = '';
   };
 
@@ -451,16 +716,28 @@ function App() {
       if (selectedDonor) {
         donorId = selectedDonor.id;
       } else {
-        // Check for existing donor with same name + email + phone before creating
+        // Check for an existing donor before creating a duplicate.
+        // Email is the primary key when provided (case-insensitive);
+        // otherwise fall back to name + phone.
         const trimName = donorForm.donorName.trim();
         const trimEmail = donorForm.donorEmail.trim() || null;
         const trimPhone = donorForm.phoneNumber.trim();
-        let existingQuery = supabase.from('donors').select('id').ilike('donor_name', trimName);
-        if (trimEmail) existingQuery = existingQuery.eq('donor_email', trimEmail);
-        else existingQuery = existingQuery.is('donor_email', null);
-        if (trimPhone) existingQuery = existingQuery.eq('phone_number', trimPhone);
-        else existingQuery = existingQuery.is('phone_number', null);
-        const { data: existingDonors } = await existingQuery.limit(1);
+
+        let existingDonors = null;
+        if (trimEmail) {
+          const { data } = await supabase
+            .from('donors').select('id')
+            .ilike('donor_email', trimEmail)
+            .limit(1);
+          existingDonors = data;
+        }
+        if (!existingDonors || existingDonors.length === 0) {
+          let nameQuery = supabase.from('donors').select('id').ilike('donor_name', trimName);
+          if (trimPhone) nameQuery = nameQuery.eq('phone_number', trimPhone);
+          else nameQuery = nameQuery.is('phone_number', null);
+          const { data } = await nameQuery.limit(1);
+          existingDonors = data;
+        }
 
         if (existingDonors && existingDonors.length > 0) {
           donorId = existingDonors[0].id;
@@ -502,7 +779,15 @@ function App() {
         const primaryImageUrl = imageUrls.length > 0 ? imageUrls[0] : null;
         const { data: insertedItem, error: itemError } = await supabase
           .from('donation_items')
-          .insert([{ donation_id: donation.id, item_description: item.itemDescription.trim(), storage_location: item.storageLocation.trim(), item_image_url: primaryImageUrl }])
+          .insert([{
+            donation_id: donation.id,
+            item_description: item.itemDescription.trim(),
+            storage_location: item.storageLocation.trim(),
+            item_image_url: primaryImageUrl,
+            category: item.category || null,
+            metadata: Object.keys(item.metadata || {}).length > 0 ? item.metadata : null,
+            agreement_type: item.agreementType || null,
+          }])
           .select('id').single();
         if (itemError) throw itemError;
         // Insert into item_images table
@@ -537,14 +822,26 @@ function App() {
 
   const startEditItem = (item) => {
     setEditingItem(item.id);
-    setEditItemForm({ itemDescription: item.item_description, storageLocation: item.storage_location });
+    setEditItemForm({
+      itemDescription: item.item_description,
+      storageLocation: item.storage_location,
+      category: item.category || '',
+      metadata: item.metadata || {},
+      agreementType: item.agreement_type || '',
+    });
   };
 
   const saveEditItem = async () => {
     if (!supabase || !editingItem) return;
     try {
       const { error } = await supabase.from('donation_items')
-        .update({ item_description: editItemForm.itemDescription.trim(), storage_location: editItemForm.storageLocation.trim() })
+        .update({
+          item_description: editItemForm.itemDescription.trim(),
+          storage_location: editItemForm.storageLocation.trim(),
+          category: editItemForm.category || null,
+          metadata: Object.keys(editItemForm.metadata || {}).length > 0 ? editItemForm.metadata : null,
+          agreement_type: editItemForm.agreementType || null,
+        })
         .eq('id', editingItem);
       if (error) throw error;
       setEditingItem(null);
@@ -583,11 +880,32 @@ function App() {
   const startPublish = (item) => {
     setPublishingItem(item.id);
     setPublishForm({ price: item.price || '', title: item.item_description });
+    setPriceSuggestion(null);
   };
 
   const cancelPublish = () => {
     setPublishingItem(null);
     setPublishForm({ price: '', title: '' });
+    setPriceSuggestion(null);
+  };
+
+  const suggestPrice = async (itemId) => {
+    if (!supabase || !itemId) return;
+    setPriceLoading(true);
+    setPriceSuggestion(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('suggest-price', {
+        body: { itemId },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      setPriceSuggestion({ ...data, forItem: itemId });
+    } catch (err) {
+      console.error('Price suggestion error:', err);
+      setPriceSuggestion({ error: err.message, forItem: itemId });
+    } finally {
+      setPriceLoading(false);
+    }
   };
 
   const publishToShopify = async () => {
@@ -606,6 +924,7 @@ function App() {
 
       setPublishingItem(null);
       setPublishForm({ price: '', title: '' });
+      setPriceSuggestion(null);
       fetchItems();
     } catch (err) {
       console.error('Publish error:', err);
@@ -617,7 +936,13 @@ function App() {
     if (!supabase || !item.shopify_product_id) return;
     setUnlistingItem(item.id);
     try {
-      // Update local status back to in_storage
+      // Delete the product from Shopify via Edge Function
+      const { error: shopifyErr } = await supabase.functions.invoke('shopify-publish', {
+        body: { action: 'delete', productId: item.shopify_product_id }
+      });
+      if (shopifyErr) console.warn('Shopify delete warning:', shopifyErr);
+
+      // Always clear locally even if Shopify delete fails
       const { error } = await supabase
         .from('donation_items')
         .update({
@@ -629,14 +954,28 @@ function App() {
         .eq('id', item.id);
       if (error) throw error;
 
-      // Note: Optionally delete from Shopify too via another edge function
-      // For now we just unlink it locally
       setUnlistingItem(null);
       fetchItems();
     } catch (err) {
       console.error('Unlist error:', err);
       setUnlistingItem(null);
     }
+  };
+
+  const sendNotifications = async () => {
+    if (!supabase || notifySending) return;
+    setNotifySending(true);
+    setNotifyResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('email-notifications', { body: {} });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      setNotifyResult({ type: 'success', text: data.message || 'Notifications sent.' });
+      fetchItems();   // refresh notification_sent flags and the pending count
+    } catch (err) {
+      console.error('Notification send error:', err);
+      setNotifyResult({ type: 'error', text: `Send failed: ${err.message}` });
+    } finally { setNotifySending(false); }
   };
 
   const getStatusLabel = (status) => {
@@ -671,6 +1010,11 @@ function App() {
         </div>
       </div>
     );
+  }
+
+  /* ─── public routes (no auth required) ─── */
+  if (window.location.pathname === '/agreement') {
+    return <AgreementPage />;
   }
 
   /* ─── auth loading ─── */
@@ -816,7 +1160,10 @@ function App() {
                         <span>{selectedDonor.phone_number}</span>
                         <span className="cr-donor-address">{selectedDonor.address}</span>
                       </div>
-                      <button type="button" className="cr-change-donor" onClick={changeDonor}>Change</button>
+                      <div className="cr-selected-donor-right">
+                        <ParticipationBadge status={selectedDonor.participation_status} />
+                        <button type="button" className="cr-change-donor" onClick={changeDonor}>Change</button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -896,6 +1243,313 @@ function App() {
                                 onChange={e => handleItemChange(item._key, 'itemDescription', e.target.value)}
                                 required placeholder="Describe the item — type, condition, dimensions, color, brand…" rows="3" />
                             </div>
+
+                            {/* Category selector */}
+                            <div className="cr-field cr-span-2">
+                              <label>Category</label>
+                              <div className="cr-category-pills">
+                                {['Clothing', 'Furniture', 'Electronics', 'Books', 'Headboards', 'Kitchen', 'Bedding', 'Desk & Study', 'Other'].map(cat => (
+                                  <button key={cat} type="button"
+                                    className={`cr-cat-pill ${item.category === cat ? 'active' : ''}`}
+                                    onClick={() => handleItemChange(item._key, 'category', item.category === cat ? '' : cat)}>
+                                    {cat}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Agreement type toggle */}
+                            <div className="cr-field cr-span-2">
+                              <label>Agreement Type <span className="cr-req">*</span></label>
+                              <div className="cr-agreement-toggle">
+                                <button type="button"
+                                  className={`cr-agreement-btn donation ${item.agreementType === 'donation' ? 'active' : ''}`}
+                                  onClick={() => handleItemChange(item._key, 'agreementType', item.agreementType === 'donation' ? '' : 'donation')}>
+                                  <span className="cr-agreement-icon">🎁</span>Donation
+                                </button>
+                                <button type="button"
+                                  className={`cr-agreement-btn consignment ${item.agreementType === 'consignment' ? 'active' : ''}`}
+                                  onClick={() => handleItemChange(item._key, 'agreementType', item.agreementType === 'consignment' ? '' : 'consignment')}>
+                                  <span className="cr-agreement-icon">🔄</span>Consignment
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* ── Clothing metadata ── */}
+                            {item.category === 'Clothing' && (
+                              <div className="cr-meta-section cr-span-2">
+                                <p className="cr-meta-title">Clothing Details <span className="cr-hint">(for Shopify listing)</span></p>
+                                <div className="cr-field-grid">
+                                  <div className="cr-field">
+                                    <label>Type</label>
+                                    <select value={item.metadata.subcategory || ''} onChange={e => handleMetaChange(item._key, 'subcategory', e.target.value)}>
+                                      <option value="">Select type…</option>
+                                      {CLOTHING_SUBCATEGORIES.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Gender</label>
+                                    <select value={item.metadata.gender || ''} onChange={e => handleMetaChange(item._key, 'gender', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {CLOTHING_GENDERS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Age Group</label>
+                                    <select value={item.metadata.age_group || ''} onChange={e => handleMetaChange(item._key, 'age_group', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {CLOTHING_AGE_GROUPS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Size</label>
+                                    <select value={item.metadata.size || ''} onChange={e => handleMetaChange(item._key, 'size', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {CLOTHING_SIZES.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Color</label>
+                                    <input type="text" placeholder="e.g. Navy Blue" value={item.metadata.color || ''}
+                                      onChange={e => handleMetaChange(item._key, 'color', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Brand</label>
+                                    <input type="text" placeholder="e.g. Levi's" value={item.metadata.brand || ''}
+                                      onChange={e => handleMetaChange(item._key, 'brand', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Fabric / Material</label>
+                                    <select value={item.metadata.fabric || ''} onChange={e => handleMetaChange(item._key, 'fabric', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {CLOTHING_FABRICS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Condition</label>
+                                    <select value={item.metadata.condition || ''} onChange={e => handleMetaChange(item._key, 'condition', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {CLOTHING_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Weight (lbs) <span className="cr-hint">(for shipping rates)</span></label>
+                                    <input type="number" step="0.1" min="0" placeholder="e.g. 1.5" value={item.metadata.weight_lbs || ''}
+                                      onChange={e => handleMetaChange(item._key, 'weight_lbs', e.target.value)} />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* ── Furniture metadata ── */}
+                            {item.category === 'Furniture' && (
+                              <div className="cr-meta-section cr-span-2">
+                                <p className="cr-meta-title">Furniture Details <span className="cr-hint">(for Shopify listing)</span></p>
+                                <div className="cr-field-grid">
+                                  <div className="cr-field">
+                                    <label>Type</label>
+                                    <select value={item.metadata.subcategory || ''} onChange={e => handleMetaChange(item._key, 'subcategory', e.target.value)}>
+                                      <option value="">Select type…</option>
+                                      {FURNITURE_SUBCATEGORIES.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Color / Finish</label>
+                                    <input type="text" placeholder="e.g. Walnut Brown" value={item.metadata.color || ''}
+                                      onChange={e => handleMetaChange(item._key, 'color', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Material</label>
+                                    <select value={item.metadata.material || ''} onChange={e => handleMetaChange(item._key, 'material', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {FURNITURE_MATERIALS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Style</label>
+                                    <select value={item.metadata.style || ''} onChange={e => handleMetaChange(item._key, 'style', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {FURNITURE_STYLES.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Dimensions <span className="cr-hint">(W × D × H)</span></label>
+                                    <input type="text" placeholder='e.g. 60" × 30" × 36"' value={item.metadata.dimensions || ''}
+                                      onChange={e => handleMetaChange(item._key, 'dimensions', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Condition</label>
+                                    <select value={item.metadata.condition || ''} onChange={e => handleMetaChange(item._key, 'condition', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {FURNITURE_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Weight (lbs) <span className="cr-hint">(for shipping rates)</span></label>
+                                    <input type="number" step="1" min="0" placeholder="e.g. 45" value={item.metadata.weight_lbs || ''}
+                                      onChange={e => handleMetaChange(item._key, 'weight_lbs', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field cr-span-2">
+                                    <label>Notes <span className="cr-hint">(assembly needed, pet home, smoke-free, missing hardware, etc.)</span></label>
+                                    <input type="text" value={item.metadata.notes || ''}
+                                      onChange={e => handleMetaChange(item._key, 'notes', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field cr-span-2">
+                                    <label>Shipping <span className="cr-hint">(controls buyer checkout options)</span></label>
+                                    <div className="cr-shipping-toggle">
+                                      <button type="button"
+                                        className={`cr-shipping-btn ${!item.metadata.local_only ? 'active ship' : ''}`}
+                                        onClick={() => handleMetaChange(item._key, 'local_only', false)}>
+                                        📦 Shipping Allowed
+                                      </button>
+                                      <button type="button"
+                                        className={`cr-shipping-btn ${item.metadata.local_only ? 'active noshipping' : ''}`}
+                                        onClick={() => handleMetaChange(item._key, 'local_only', true)}>
+                                        📍 Local Pickup Only
+                                      </button>
+                                    </div>
+                                    {item.metadata.local_only && (
+                                      <span className="cr-hint cr-noshipping-hint">Shipping will be disabled at Shopify checkout for this item</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* ── Headboards metadata ── */}
+                            {item.category === 'Headboards' && (
+                              <div className="cr-meta-section cr-span-2">
+                                <p className="cr-meta-title">Headboard Details <span className="cr-hint">(for Shopify listing)</span></p>
+                                <div className="cr-field-grid">
+                                  <div className="cr-field">
+                                    <label>Type</label>
+                                    <select value={item.metadata.subcategory || ''} onChange={e => handleMetaChange(item._key, 'subcategory', e.target.value)}>
+                                      <option value="">Select type…</option>
+                                      {HEADBOARD_TYPES.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Color / Finish</label>
+                                    <input type="text" placeholder="e.g. Dark Walnut" value={item.metadata.color || ''}
+                                      onChange={e => handleMetaChange(item._key, 'color', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Material</label>
+                                    <select value={item.metadata.material || ''} onChange={e => handleMetaChange(item._key, 'material', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {HEADBOARD_MATERIALS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Style</label>
+                                    <select value={item.metadata.style || ''} onChange={e => handleMetaChange(item._key, 'style', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {HEADBOARD_STYLES.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Dimensions <span className="cr-hint">(W × H)</span></label>
+                                    <input type="text" placeholder='e.g. 60" × 48"' value={item.metadata.dimensions || ''}
+                                      onChange={e => handleMetaChange(item._key, 'dimensions', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Condition</label>
+                                    <select value={item.metadata.condition || ''} onChange={e => handleMetaChange(item._key, 'condition', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {HEADBOARD_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Weight (lbs) <span className="cr-hint">(for shipping rates)</span></label>
+                                    <input type="number" step="1" min="0" placeholder="e.g. 20" value={item.metadata.weight_lbs || ''}
+                                      onChange={e => handleMetaChange(item._key, 'weight_lbs', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field cr-span-2">
+                                    <label>Notes <span className="cr-hint">(size compatibility, wall-mount hardware included, etc.)</span></label>
+                                    <input type="text" value={item.metadata.notes || ''}
+                                      onChange={e => handleMetaChange(item._key, 'notes', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field cr-span-2">
+                                    <label>Shipping <span className="cr-hint">(controls buyer checkout options)</span></label>
+                                    <div className="cr-shipping-toggle">
+                                      <button type="button"
+                                        className={`cr-shipping-btn ${!item.metadata.local_only ? 'active ship' : ''}`}
+                                        onClick={() => handleMetaChange(item._key, 'local_only', false)}>
+                                        📦 Shipping Allowed
+                                      </button>
+                                      <button type="button"
+                                        className={`cr-shipping-btn ${item.metadata.local_only ? 'active noshipping' : ''}`}
+                                        onClick={() => handleMetaChange(item._key, 'local_only', true)}>
+                                        📍 Local Pickup Only
+                                      </button>
+                                    </div>
+                                    {item.metadata.local_only && (
+                                      <span className="cr-hint cr-noshipping-hint">Shipping will be disabled at Shopify checkout for this item</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            {/* ── Other metadata ── */}
+                            {item.category === 'Other' && (
+                              <div className="cr-meta-section cr-span-2">
+                                <p className="cr-meta-title">Item Details <span className="cr-hint">(for Shopify listing)</span></p>
+                                <div className="cr-field-grid">
+                                  <div className="cr-field">
+                                    <label>Color</label>
+                                    <input type="text" placeholder="e.g. Black" value={item.metadata.color || ''}
+                                      onChange={e => handleMetaChange(item._key, 'color', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Material</label>
+                                    <select value={item.metadata.material || ''} onChange={e => handleMetaChange(item._key, 'material', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {FURNITURE_MATERIALS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Dimensions <span className="cr-hint">(W × D × H)</span></label>
+                                    <input type="text" placeholder='e.g. 12" × 8" × 4"' value={item.metadata.dimensions || ''}
+                                      onChange={e => handleMetaChange(item._key, 'dimensions', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Weight</label>
+                                    <input type="text" placeholder="e.g. 2 lbs" value={item.metadata.weight || ''}
+                                      onChange={e => handleMetaChange(item._key, 'weight', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Condition</label>
+                                    <select value={item.metadata.condition || ''} onChange={e => handleMetaChange(item._key, 'condition', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {OTHER_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="cr-field cr-span-2">
+                                    <label>Notes <span className="cr-hint">(missing parts, pet home, smoke-free, needs repair, etc.)</span></label>
+                                    <input type="text" placeholder="Any additional details" value={item.metadata.notes || ''}
+                                      onChange={e => handleMetaChange(item._key, 'notes', e.target.value)} />
+                                  </div>
+                                  <div className="cr-field cr-span-2">
+                                    <label>Shipping <span className="cr-hint">(controls buyer checkout options)</span></label>
+                                    <div className="cr-shipping-toggle">
+                                      <button type="button"
+                                        className={`cr-shipping-btn ${!item.metadata.local_only ? 'active ship' : ''}`}
+                                        onClick={() => handleMetaChange(item._key, 'local_only', false)}>
+                                        📦 Shipping Allowed
+                                      </button>
+                                      <button type="button"
+                                        className={`cr-shipping-btn ${item.metadata.local_only ? 'active noshipping' : ''}`}
+                                        onClick={() => handleMetaChange(item._key, 'local_only', true)}>
+                                        📍 Local Pickup Only
+                                      </button>
+                                    </div>
+                                    {item.metadata.local_only && (
+                                      <span className="cr-hint cr-noshipping-hint">Shipping will be disabled at Shopify checkout for this item</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                             <div className="cr-field">
                               <label>Storage Location <span className="cr-req">*</span></label>
                               <input type="text" value={item.storageLocation}
@@ -903,13 +1557,29 @@ function App() {
                                 required placeholder="Building A, Shelf 12" />
                             </div>
                             <div className="cr-field">
-                              <label>Photos <span className="cr-hint">(up to 4)</span></label>
+                              <label>
+                                Photos <span className="cr-hint">(up to 4)</span>
+                                {aiStatus[item._key] === 'analyzing' && (
+                                  <span className="cr-ai-badge analyzing"><span className="cr-spinner sm"></span> Analyzing…</span>
+                                )}
+                                {aiStatus[item._key] === 'done' && (
+                                  <span className="cr-ai-badge done">✦ AI filled</span>
+                                )}
+                                {aiStatus[item._key] === 'error' && (
+                                  <span className="cr-ai-badge error">AI unavailable</span>
+                                )}
+                              </label>
                               <div className="cr-multi-upload">
                                 {(imagePreviews[item._key] || []).map((src, i) => (
                                   <div key={i} className="cr-upload-thumb">
                                     <img src={src} alt={`Preview ${i + 1}`} />
                                     <button type="button" className="cr-upload-remove" onClick={() => removeItemImage(item._key, i)}
                                       aria-label="Remove photo">&times;</button>
+                                    {i === 0 && aiStatus[item._key] !== 'analyzing' && (
+                                      <button type="button" className="cr-reanalyze"
+                                        onClick={() => analyzeItemImage(item._key, src)}
+                                        title="Re-analyze with AI">✦</button>
+                                    )}
                                   </div>
                                 ))}
                                 {(imagePreviews[item._key] || []).length < 4 && (
@@ -1015,7 +1685,28 @@ function App() {
               <span className="cr-stat-num">{stats.donors}</span>
               <span className="cr-stat-label">Active Donors</span>
             </div>
+            <div className="cr-stat">
+              <div className="cr-stat-icon amber">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
+                  <path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <span className="cr-stat-num">{stats.pendingNotify}</span>
+              <span className="cr-stat-label">Pending Notifications</span>
+              {stats.pendingNotify > 0 && (
+                <button className="cr-notify-btn" onClick={sendNotifications} disabled={notifySending}>
+                  {notifySending ? <><span className="cr-spinner sm"></span> Sending…</> : 'Send Emails'}
+                </button>
+              )}
+            </div>
           </div>
+
+          {notifyResult && (
+            <div className={`cr-toast ${notifyResult.type}`} role="status">
+              {notifyResult.text}
+              <button className="cr-clear" onClick={() => setNotifyResult(null)}>&times;</button>
+            </div>
+          )}
 
           <div className="cr-toolbar">
             <div className="cr-search">
@@ -1102,6 +1793,11 @@ function App() {
                         </div>
                       </div>
                       <div className="cr-card-right">
+                        {item.agreement_type && (
+                          <span className={`cr-tag cr-agr-tag ${item.agreement_type}`}>
+                            {item.agreement_type === 'consignment' ? '🔄 Consignment' : '🎁 Donation'}
+                          </span>
+                        )}
                         <span className={`cr-tag status ${item.status || 'in_storage'}`}>{getStatusLabel(item.status)}</span>
                         {item.price && <span className="cr-tag price">${parseFloat(item.price).toFixed(2)}</span>}
                         <span className="cr-tag location">{item.storage_location}</span>
@@ -1128,6 +1824,303 @@ function App() {
                                 <input type="text" value={editItemForm.storageLocation}
                                   onChange={e => setEditItemForm(p => ({ ...p, storageLocation: e.target.value }))} />
                               </div>
+                              <div className="cr-field cr-span-2">
+                                <label>Category</label>
+                                <div className="cr-category-pills">
+                                  {['Clothing', 'Furniture', 'Electronics', 'Books', 'Headboards', 'Kitchen', 'Bedding', 'Desk & Study', 'Other'].map(cat => (
+                                    <button key={cat} type="button"
+                                      className={`cr-cat-pill ${editItemForm.category === cat ? 'active' : ''}`}
+                                      onClick={() => setEditItemForm(p => ({ ...p, category: p.category === cat ? '' : cat }))}>
+                                      {cat}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="cr-field cr-span-2">
+                                <label>Agreement Type</label>
+                                <div className="cr-agreement-toggle">
+                                  <button type="button"
+                                    className={`cr-agreement-btn donation ${editItemForm.agreementType === 'donation' ? 'active' : ''}`}
+                                    onClick={() => setEditItemForm(p => ({ ...p, agreementType: p.agreementType === 'donation' ? '' : 'donation' }))}>
+                                    <span className="cr-agreement-icon">🎁</span>Donation
+                                  </button>
+                                  <button type="button"
+                                    className={`cr-agreement-btn consignment ${editItemForm.agreementType === 'consignment' ? 'active' : ''}`}
+                                    onClick={() => setEditItemForm(p => ({ ...p, agreementType: p.agreementType === 'consignment' ? '' : 'consignment' }))}>
+                                    <span className="cr-agreement-icon">🔄</span>Consignment
+                                  </button>
+                                </div>
+                              </div>
+                              {editItemForm.category === 'Clothing' && (
+                                <div className="cr-meta-section cr-span-2">
+                                  <p className="cr-meta-title">Clothing Details</p>
+                                  <div className="cr-field-grid">
+                                    <div className="cr-field">
+                                      <label>Type</label>
+                                      <select value={editItemForm.metadata.subcategory || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, subcategory: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_SUBCATEGORIES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Gender</label>
+                                      <select value={editItemForm.metadata.gender || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, gender: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_GENDERS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Age Group</label>
+                                      <select value={editItemForm.metadata.age_group || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, age_group: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_AGE_GROUPS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Size</label>
+                                      <select value={editItemForm.metadata.size || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, size: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_SIZES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Color</label>
+                                      <input type="text" placeholder="e.g. Navy Blue" value={editItemForm.metadata.color || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Brand</label>
+                                      <input type="text" placeholder="e.g. Levi's" value={editItemForm.metadata.brand || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, brand: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Fabric</label>
+                                      <select value={editItemForm.metadata.fabric || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, fabric: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_FABRICS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Condition</label>
+                                      <select value={editItemForm.metadata.condition || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, condition: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Weight (lbs) <span className="cr-hint">(for shipping rates)</span></label>
+                                      <input type="number" step="0.1" min="0" placeholder="e.g. 1.5" value={editItemForm.metadata.weight_lbs || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, weight_lbs: e.target.value } }))} />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                              {editItemForm.category === 'Furniture' && (
+                                <div className="cr-meta-section cr-span-2">
+                                  <p className="cr-meta-title">Furniture Details</p>
+                                  <div className="cr-field-grid">
+                                    <div className="cr-field">
+                                      <label>Type</label>
+                                      <select value={editItemForm.metadata.subcategory || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, subcategory: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_SUBCATEGORIES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Color / Finish</label>
+                                      <input type="text" placeholder="e.g. Walnut Brown" value={editItemForm.metadata.color || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Material</label>
+                                      <select value={editItemForm.metadata.material || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, material: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_MATERIALS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Style</label>
+                                      <select value={editItemForm.metadata.style || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, style: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_STYLES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Dimensions</label>
+                                      <input type="text" placeholder='e.g. 60" × 30" × 36"' value={editItemForm.metadata.dimensions || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, dimensions: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Condition</label>
+                                      <select value={editItemForm.metadata.condition || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, condition: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Weight (lbs) <span className="cr-hint">(for shipping rates)</span></label>
+                                      <input type="number" step="1" min="0" placeholder="e.g. 45" value={editItemForm.metadata.weight_lbs || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, weight_lbs: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Notes</label>
+                                      <input type="text" value={editItemForm.metadata.notes || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, notes: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Shipping <span className="cr-hint">(controls buyer checkout options)</span></label>
+                                      <div className="cr-shipping-toggle">
+                                        <button type="button"
+                                          className={`cr-shipping-btn ${!editItemForm.metadata.local_only ? 'active ship' : ''}`}
+                                          onClick={() => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, local_only: false } }))}>
+                                          📦 Shipping Allowed
+                                        </button>
+                                        <button type="button"
+                                          className={`cr-shipping-btn ${editItemForm.metadata.local_only ? 'active noshipping' : ''}`}
+                                          onClick={() => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, local_only: true } }))}>
+                                          📍 Local Pickup Only
+                                        </button>
+                                      </div>
+                                      {editItemForm.metadata.local_only && (
+                                        <span className="cr-hint cr-noshipping-hint">Shipping will be disabled at Shopify checkout for this item</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {editItemForm.category === 'Headboards' && (
+                                <div className="cr-meta-section cr-span-2">
+                                  <p className="cr-meta-title">Headboard Details</p>
+                                  <div className="cr-field-grid">
+                                    <div className="cr-field">
+                                      <label>Type</label>
+                                      <select value={editItemForm.metadata.subcategory || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, subcategory: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {HEADBOARD_TYPES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Color / Finish</label>
+                                      <input type="text" placeholder="e.g. Dark Walnut" value={editItemForm.metadata.color || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Material</label>
+                                      <select value={editItemForm.metadata.material || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, material: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {HEADBOARD_MATERIALS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Style</label>
+                                      <select value={editItemForm.metadata.style || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, style: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {HEADBOARD_STYLES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Dimensions <span className="cr-hint">(W × H)</span></label>
+                                      <input type="text" placeholder='e.g. 60" × 48"' value={editItemForm.metadata.dimensions || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, dimensions: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Condition</label>
+                                      <select value={editItemForm.metadata.condition || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, condition: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {HEADBOARD_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Weight (lbs) <span className="cr-hint">(for shipping rates)</span></label>
+                                      <input type="number" step="1" min="0" placeholder="e.g. 20" value={editItemForm.metadata.weight_lbs || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, weight_lbs: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Notes</label>
+                                      <input type="text" value={editItemForm.metadata.notes || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, notes: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Shipping <span className="cr-hint">(controls buyer checkout options)</span></label>
+                                      <div className="cr-shipping-toggle">
+                                        <button type="button"
+                                          className={`cr-shipping-btn ${!editItemForm.metadata.local_only ? 'active ship' : ''}`}
+                                          onClick={() => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, local_only: false } }))}>
+                                          📦 Shipping Allowed
+                                        </button>
+                                        <button type="button"
+                                          className={`cr-shipping-btn ${editItemForm.metadata.local_only ? 'active noshipping' : ''}`}
+                                          onClick={() => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, local_only: true } }))}>
+                                          📍 Local Pickup Only
+                                        </button>
+                                      </div>
+                                      {editItemForm.metadata.local_only && (
+                                        <span className="cr-hint cr-noshipping-hint">Shipping will be disabled at Shopify checkout for this item</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                              {editItemForm.category === 'Other' && (
+                                <div className="cr-meta-section cr-span-2">
+                                  <p className="cr-meta-title">Item Details</p>
+                                  <div className="cr-field-grid">
+                                    <div className="cr-field">
+                                      <label>Color</label>
+                                      <input type="text" placeholder="e.g. Black" value={editItemForm.metadata.color || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Material</label>
+                                      <select value={editItemForm.metadata.material || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, material: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_MATERIALS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Dimensions <span className="cr-hint">(W × D × H)</span></label>
+                                      <input type="text" placeholder='e.g. 12" × 8" × 4"' value={editItemForm.metadata.dimensions || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, dimensions: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Weight</label>
+                                      <input type="text" placeholder="e.g. 2 lbs" value={editItemForm.metadata.weight || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, weight: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Condition</label>
+                                      <select value={editItemForm.metadata.condition || ''} onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, condition: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {OTHER_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Notes <span className="cr-hint">(missing parts, pet home, smoke-free, needs repair, etc.)</span></label>
+                                      <input type="text" placeholder="Any additional details" value={editItemForm.metadata.notes || ''}
+                                        onChange={e => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, notes: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Shipping <span className="cr-hint">(controls buyer checkout options)</span></label>
+                                      <div className="cr-shipping-toggle">
+                                        <button type="button"
+                                          className={`cr-shipping-btn ${!editItemForm.metadata.local_only ? 'active ship' : ''}`}
+                                          onClick={() => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, local_only: false } }))}>
+                                          📦 Shipping Allowed
+                                        </button>
+                                        <button type="button"
+                                          className={`cr-shipping-btn ${editItemForm.metadata.local_only ? 'active noshipping' : ''}`}
+                                          onClick={() => setEditItemForm(p => ({ ...p, metadata: { ...p.metadata, local_only: true } }))}>
+                                          📍 Local Pickup Only
+                                        </button>
+                                      </div>
+                                      {editItemForm.metadata.local_only && (
+                                        <span className="cr-hint cr-noshipping-hint">Shipping will be disabled at Shopify checkout for this item</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                             <div className="cr-detail-actions">
                               <button className="cr-act edit" onClick={saveEditItem}>Save</button>
@@ -1142,6 +2135,11 @@ function App() {
                               <div><span className="cr-detail-label">Phone</span><span>{donor?.phone_number}</span></div>
                               {donor?.donor_email && <div><span className="cr-detail-label">Email</span><span>{donor?.donor_email}</span></div>}
                               <div><span className="cr-detail-label">Date Accepted</span><span>{formatDate(dateAcc)}</span></div>
+                              <div><span className="cr-detail-label">Agreement</span>
+                                <span className={`cr-agr-inline ${item.agreement_type || 'none'}`}>
+                                  {item.agreement_type === 'consignment' ? '🔄 Consignment' : item.agreement_type === 'donation' ? '🎁 Donation' : '—'}
+                                </span>
+                              </div>
                               <div><span className="cr-detail-label">Notification</span>
                                 <span>{item.notification_sent ? `Sent ${formatDate(item.notification_sent.split('T')[0])}` : donor?.donor_email ? 'Pending' : 'No email on file'}</span>
                               </div>
@@ -1169,6 +2167,46 @@ function App() {
                                   </svg>
                                   Publish to Shopify Store
                                 </h4>
+
+                                {/* Pre-publish checklist */}
+                                <div className="cr-publish-checklist">
+                                  <div className={`cr-check-row ${item.category ? 'ok' : 'warn'}`}>
+                                    <span className="cr-check-icon">{item.category ? '✓' : '⚠'}</span>
+                                    <span>Category: <strong>{item.category || 'Not set — item will publish as "Donated Item" with no collection tags'}</strong></span>
+                                  </div>
+                                  <div className={`cr-check-row ${item.agreement_type ? 'ok' : 'warn'}`}>
+                                    <span className="cr-check-icon">{item.agreement_type ? '✓' : '⚠'}</span>
+                                    <span>Agreement type: <strong>{item.agreement_type || 'Not set'}</strong></span>
+                                  </div>
+                                  {item.category === 'Clothing' && (
+                                    <div className={`cr-check-row ${item.metadata?.gender ? 'ok' : 'warn'}`}>
+                                      <span className="cr-check-icon">{item.metadata?.gender ? '✓' : '⚠'}</span>
+                                      <span>Gender: <strong>{item.metadata?.gender || 'Not set — item won\'t appear in Men\'s or Women\'s collections'}</strong></span>
+                                    </div>
+                                  )}
+                                  {item.category === 'Clothing' && (
+                                    <div className={`cr-check-row ${item.metadata?.size ? 'ok' : 'warn'}`}>
+                                      <span className="cr-check-icon">{item.metadata?.size ? '✓' : '⚠'}</span>
+                                      <span>Size: <strong>{item.metadata?.size || 'Not set'}</strong></span>
+                                    </div>
+                                  )}
+                                  {(item.category === 'Clothing' || item.category === 'Furniture' || item.category === 'Headboards') && (
+                                    <div className={`cr-check-row ${item.metadata?.weight_lbs ? 'ok' : 'warn'}`}>
+                                      <span className="cr-check-icon">{item.metadata?.weight_lbs ? '✓' : '⚠'}</span>
+                                      <span>Weight: <strong>{item.metadata?.weight_lbs ? `${item.metadata.weight_lbs} lbs` : 'Not set — carrier-calculated shipping will be inaccurate'}</strong></span>
+                                    </div>
+                                  )}
+                                  {(item.category === 'Furniture' || item.category === 'Headboards') && (
+                                    <div className={`cr-check-row ${item.metadata?.local_only ? 'noshipping' : 'ok'}`}>
+                                      <span className="cr-check-icon">{item.metadata?.local_only ? '📍' : '📦'}</span>
+                                      <span>Shipping: <strong>{item.metadata?.local_only ? 'Local Pickup Only — shipping disabled at checkout' : 'Allowed — carrier-calculated rates apply'}</strong></span>
+                                    </div>
+                                  )}
+                                  {(!item.category || (item.category === 'Clothing' && !item.metadata?.gender)) && (
+                                    <p className="cr-check-hint">⚠ Edit this item first to fill in missing fields, then publish.</p>
+                                  )}
+                                </div>
+
                                 <div className="cr-field-grid">
                                   <div className="cr-field">
                                     <label>Listing Title</label>
@@ -1178,12 +2216,45 @@ function App() {
                                   </div>
                                   <div className="cr-field">
                                     <label>Price <span className="cr-req">*</span></label>
-                                    <div className="cr-price-input">
-                                      <span className="cr-price-prefix">$</span>
-                                      <input type="number" step="0.01" min="0" value={publishForm.price}
-                                        onChange={e => setPublishForm(p => ({ ...p, price: e.target.value }))}
-                                        placeholder="0.00" required />
+                                    <div className="cr-price-row">
+                                      <div className="cr-price-input">
+                                        <span className="cr-price-prefix">$</span>
+                                        <input type="number" step="0.01" min="0" value={publishForm.price}
+                                          onChange={e => setPublishForm(p => ({ ...p, price: e.target.value }))}
+                                          placeholder="0.00" required />
+                                      </div>
+                                      <button type="button" className="cr-act cr-suggest-btn"
+                                        onClick={() => suggestPrice(item.id)}
+                                        disabled={priceLoading}>
+                                        {priceLoading
+                                          ? <><span className="cr-spinner sm"></span> Thinking…</>
+                                          : <>✦ Suggest Price</>}
+                                      </button>
                                     </div>
+                                    {priceSuggestion && priceSuggestion.forItem === item.id && !priceSuggestion.error && (
+                                      <div className="cr-price-suggestion">
+                                        <div className="cr-price-suggestion-header">
+                                          <span className="cr-price-suggestion-badge">✦ AI Price Suggestion</span>
+                                          <span className="cr-price-suggestion-range">
+                                            Range: ${priceSuggestion.price_range.low.toFixed(2)} – ${priceSuggestion.price_range.high.toFixed(2)}
+                                          </span>
+                                        </div>
+                                        <div className="cr-price-suggestion-main">
+                                          <span className="cr-price-suggestion-value">${priceSuggestion.suggested_price.toFixed(2)}</span>
+                                          <button type="button" className="cr-act edit cr-price-accept"
+                                            onClick={() => setPublishForm(p => ({ ...p, price: priceSuggestion.suggested_price.toFixed(2) }))}>
+                                            Use This Price
+                                          </button>
+                                        </div>
+                                        <p className="cr-price-suggestion-rationale">{priceSuggestion.rationale}</p>
+                                        {priceSuggestion.floor_price > 0 && (
+                                          <p className="cr-price-suggestion-floor">Floor: ${priceSuggestion.floor_price.toFixed(2)} (condition-based minimum)</p>
+                                        )}
+                                      </div>
+                                    )}
+                                    {priceSuggestion?.error && priceSuggestion.forItem === item.id && (
+                                      <p className="cr-price-suggestion-error">Could not get suggestion: {priceSuggestion.error}</p>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="cr-detail-actions">
@@ -1255,7 +2326,7 @@ function App() {
                                   <button className="cr-act" onClick={() => setDeleteConfirm(null)}>Cancel</button>
                                 </span>
                               ) : (
-                                item.status !== 'sold' && (
+                                item.status !== 'sold' && item.status !== 'listed' && (
                                   <button className="cr-act danger" onClick={() => setDeleteConfirm(item.id)}>
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
                                       <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
@@ -1280,6 +2351,26 @@ function App() {
       {/* ═══ TAB: DONORS ═══ */}
       {tab === 'donors' && (
         <main className="cr-main">
+          <div className="cr-sub-tabs">
+            <button className={`cr-sub-tab ${donorSubTab === 'donors' ? 'active' : ''}`}
+              onClick={() => setDonorSubTab('donors')}>
+              Donors
+            </button>
+            <button className={`cr-sub-tab ${donorSubTab === 'agreements' ? 'active' : ''}`}
+              onClick={() => setDonorSubTab('agreements')}>
+              Agreements
+              {agreements.length > 0 && <span className="cr-sub-tab-count">{agreements.length}</span>}
+            </button>
+            <button className={`cr-sub-tab ${donorSubTab === 'payouts' ? 'active' : ''}`}
+              onClick={() => setDonorSubTab('payouts')}>
+              Payouts
+              {payouts.filter(p => !p.payout_paid).length > 0 && (
+                <span className="cr-sub-tab-count warn">{payouts.filter(p => !p.payout_paid).length}</span>
+              )}
+            </button>
+          </div>
+
+          {donorSubTab === 'donors' && (<>
           <div className="cr-toolbar">
             <div className="cr-search">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
@@ -1320,11 +2411,7 @@ function App() {
                         </div>
                       </div>
                       <div className="cr-card-right">
-                        {(donorWaivers[donor.id] && donorWaivers[donor.id].length > 0) ? (
-                          <span className="cr-tag status listed" title="Waiver on file">Waiver ✓</span>
-                        ) : (
-                          <span className="cr-tag status in_storage" title="No waiver on file">No Waiver</span>
-                        )}
+                        <ParticipationBadge status={donor.participation_status} />
                         <span className="cr-tag location">{totalDonations} visit{totalDonations !== 1 ? 's' : ''}</span>
                         <span className="cr-tag age">{totalItems} item{totalItems !== 1 ? 's' : ''}</span>
                         <svg className={`cr-chevron ${isExp ? 'open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
@@ -1369,10 +2456,29 @@ function App() {
                               <div><span className="cr-detail-label">Member Since</span><span>{formatDate(donor.created_at?.split('T')[0])}</span></div>
                             </div>
 
-                            {/* ── Waiver Section ── */}
+                            {/* ── Participation Agreement Section ── */}
                             <div className="cr-waiver-section">
-                              <h4 className="cr-history-title">Liability Waiver</h4>
-                              {donorWaivers[donor.id] && donorWaivers[donor.id].length > 0 ? (
+                              <h4 className="cr-history-title">Participation Agreement</h4>
+                              <div className="cr-agreement-row">
+                                <ParticipationBadge status={donor.participation_status} large />
+                                {(!donor.participation_status || donor.participation_status === 'pending') && donor.donor_email && (
+                                  <a
+                                    className="cr-act edit cr-send-agreement"
+                                    href={`mailto:${donor.donor_email}?subject=Campus%20Reclaimed%20Participation%20Agreement&body=Hi%20${encodeURIComponent(donor.donor_name.split(' ')[0])}%2C%0A%0APlease%20complete%20your%20Campus%20Reclaimed%20Participation%20Agreement%20at%20the%20link%20below%20before%20dropping%20off%20your%20items.%0A%0Ahttps%3A%2F%2F92mauwn4py.us-east-1.awsapprunner.com%2Fagreement%0A%0AThanks!`}
+                                  >
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
+                                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" strokeLinecap="round" strokeLinejoin="round" />
+                                      <path d="M22 6l-10 7L2 6" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                    Send Agreement
+                                  </a>
+                                )}
+                                {donor.participation_status && donor.participation_status !== 'pending' && (
+                                  <span className="cr-agreement-complete">Agreement on file ✓</span>
+                                )}
+                              </div>
+                              {/* Waiver PDFs (from older system) */}
+                              {donorWaivers[donor.id] && donorWaivers[donor.id].length > 0 && (
                                 <div className="cr-waiver-list">
                                   {donorWaivers[donor.id].map(w => (
                                     <div key={w.id} className="cr-waiver-entry">
@@ -1389,8 +2495,6 @@ function App() {
                                     </div>
                                   ))}
                                 </div>
-                              ) : (
-                                <p className="cr-history-empty">No waiver on file for this donor.</p>
                               )}
                             </div>
 
@@ -1447,6 +2551,265 @@ function App() {
                 );
               })}
             </ul>
+          )}
+          </>)}
+
+          {donorSubTab === 'agreements' && (
+            <div className="cr-agreements-panel">
+              <div className="cr-toolbar cr-agreements-toolbar">
+                <div className="cr-search">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="18" height="18">
+                    <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" strokeLinecap="round" />
+                  </svg>
+                  <input type="text" placeholder="Search by name or email…" value={agreementSearch}
+                    onChange={e => setAgreementSearch(e.target.value)} />
+                  {agreementSearch && <button className="cr-clear" onClick={() => setAgreementSearch('')}>&times;</button>}
+                </div>
+                <div className="cr-agreement-filters">
+                  {['all', 'consignment', 'donation'].map(f => (
+                    <button key={f}
+                      className={`cr-filter-btn ${agreementTypeFilter === f ? 'active' : ''}`}
+                      onClick={() => setAgreementTypeFilter(f)}>
+                      {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                <button className="cr-act edit cr-refresh-btn" onClick={fetchAgreements} disabled={agreementsLoading}>
+                  {agreementsLoading ? <span className="cr-spinner sm"></span> : '↻'} Refresh
+                </button>
+              </div>
+
+              {agreementsLoading ? (
+                <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading agreements…</p></div>
+              ) : (() => {
+                const q = agreementSearch.trim().toLowerCase();
+                const filtered = agreements.filter(a => {
+                  const matchesSearch = !q ||
+                    (a.first_name + ' ' + a.last_name).toLowerCase().includes(q) ||
+                    (a.email || '').toLowerCase().includes(q) ||
+                    (a.phone || '').includes(q);
+                  const matchesType = agreementTypeFilter === 'all' || a.agreement_type === agreementTypeFilter;
+                  return matchesSearch && matchesType;
+                });
+                if (filtered.length === 0) return (
+                  <div className="cr-empty">
+                    <h3>{agreements.length === 0 ? 'No agreements yet' : 'No matching agreements'}</h3>
+                    <p>{agreements.length === 0 ? 'Submitted agreements will appear here.' : 'Try adjusting your search or filter.'}</p>
+                  </div>
+                );
+                return (
+                  <div className="cr-agreements-table-wrap">
+                    <table className="cr-agreements-table">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Email</th>
+                          <th>Phone</th>
+                          <th>Type</th>
+                          <th>Submitted</th>
+                          <th>Agreement</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filtered.map(a => (
+                          <tr key={a.id}>
+                            <td><strong>{a.first_name}{a.mi ? ' ' + a.mi + '.' : ''} {a.last_name}</strong></td>
+                            <td>{a.email || '—'}</td>
+                            <td>{a.phone || '—'}</td>
+                            <td>
+                              <span className={`cr-tag ${a.agreement_type === 'consignment' ? 'consignment' : 'donation'}`}>
+                                {a.agreement_type === 'consignment' ? '🔄 Consignment' : '🎁 Donation'}
+                              </span>
+                            </td>
+                            <td className="cr-agreements-date">
+                              {a.submitted_at ? new Date(a.submitted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                            </td>
+                            <td>
+                              {a.pdf_url ? (
+                                <a href={a.pdf_url} target="_blank" rel="noopener noreferrer"
+                                  className="cr-act edit cr-waiver-link">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="13" height="13">
+                                    <path d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                  View PDF
+                                </a>
+                              ) : <span className="cr-hint">No PDF</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <p className="cr-agreements-count">{filtered.length} agreement{filtered.length !== 1 ? 's' : ''}{agreementTypeFilter !== 'all' ? ' (' + agreementTypeFilter + ')' : ''}</p>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+          {donorSubTab === 'payouts' && (
+            <div className="cr-payouts-panel">
+              <div className="cr-toolbar">
+                <div className="cr-payout-filter">
+                  {[['unpaid', 'Unpaid'], ['paid', 'Paid'], ['all', 'All']].map(([val, label]) => (
+                    <button key={val}
+                      className={`cr-filter-btn ${payoutFilter === val ? 'active' : ''}`}
+                      onClick={() => setPayoutFilter(val)}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="cr-act edit cr-refresh-btn" onClick={exportPayoutsCSV} disabled={payouts.length === 0} title="Download CSV">
+                    ⬇ Export CSV
+                  </button>
+                  <button className="cr-act edit cr-refresh-btn" onClick={fetchPayouts} disabled={payoutsLoading}>
+                    {payoutsLoading ? <span className="cr-spinner sm"></span> : '↻'} Refresh
+                  </button>
+                </div>
+              </div>
+
+              {payoutsLoading ? (
+                <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading payouts…</p></div>
+              ) : (() => {
+                const filtered = payouts.filter(p => {
+                  if (payoutFilter === 'unpaid') return !p.payout_paid;
+                  if (payoutFilter === 'paid')   return !!p.payout_paid;
+                  return true;
+                });
+
+                if (filtered.length === 0) return (
+                  <div className="cr-empty">
+                    <h3>{payouts.length === 0 ? 'No consignment sales yet' : `No ${payoutFilter} payouts`}</h3>
+                    <p>{payouts.length === 0 ? 'Payouts appear here when consignment items are sold.' : 'Try a different filter.'}</p>
+                  </div>
+                );
+
+                const totalOwed = filtered.filter(p => !p.payout_paid)
+                  .reduce((sum, p) => sum + ((p.shopify_payout || p.price || 0) * (p.payout_percentage || 20) / 100), 0);
+
+                return (
+                  <>
+                    {payoutFilter !== 'paid' && (
+                      <div className="cr-payout-summary">
+                        <span>Total outstanding: <strong>${totalOwed.toFixed(2)}</strong></span>
+                        <span className="cr-hint">{filtered.filter(p => !p.payout_paid).length} unpaid item{filtered.filter(p => !p.payout_paid).length !== 1 ? 's' : ''}</span>
+                      </div>
+                    )}
+                    <div className="cr-payout-list">
+                      {filtered.map(p => {
+                        const donor       = p.donation?.donor;
+                        const saleAmount   = parseFloat(p.shopify_payout || p.price || 0);
+                        const pct          = parseFloat(p.payout_percentage || 20);
+                        const calculated   = (saleAmount * pct / 100).toFixed(2);
+                        const hasOverride  = p.payout_override != null && p.payout_override !== '';
+                        const amountOwed   = hasOverride ? parseFloat(p.payout_override).toFixed(2) : calculated;
+                        const isPaid       = !!p.payout_paid;
+
+                        return (
+                          <div key={p.id} className={`cr-payout-card ${isPaid ? 'paid' : 'unpaid'}`}>
+                            <div className="cr-payout-header">
+                              <div className="cr-payout-donor">
+                                <div className="cr-donor-avatar">{donor?.donor_name?.charAt(0).toUpperCase() || '?'}</div>
+                                <div>
+                                  <strong>{donor?.donor_name || '—'}</strong>
+                                  {p.venmo_handle && <span className="cr-payout-venmo">💸 {p.venmo_handle}</span>}
+                                </div>
+                              </div>
+                              <div className={`cr-payout-status-badge ${isPaid ? 'paid' : 'unpaid'}`}>
+                                {isPaid ? '✓ Paid' : '⏳ Unpaid'}
+                              </div>
+                            </div>
+
+                            <div className="cr-payout-item-desc">{p.item_description}</div>
+
+                            <div className="cr-payout-details">
+                              <div className="cr-payout-detail-row">
+                                <span className="cr-detail-label">Sold</span>
+                                <span>{p.sold_at ? formatDate(p.sold_at.split('T')[0]) : '—'}</span>
+                              </div>
+                              {p.buyer_name && (
+                                <div className="cr-payout-detail-row">
+                                  <span className="cr-detail-label">Buyer</span>
+                                  <span>{p.buyer_name}</span>
+                                </div>
+                              )}
+                              <div className="cr-payout-detail-row">
+                                <span className="cr-detail-label">Sale amount</span>
+                                <span>${saleAmount.toFixed(2)}</span>
+                              </div>
+                              <div className="cr-payout-detail-row">
+                                <span className="cr-detail-label">Consignor %</span>
+                                <div className="cr-payout-pct-input">
+                                  <input
+                                    type="number" min="0" max="100" step="1"
+                                    value={pct}
+                                    disabled={isPaid}
+                                    onChange={e => {
+                                      const val = parseFloat(e.target.value) || 20;
+                                      savePayoutRecord(p.id, { payout_percentage: val });
+                                    }}
+                                  />
+                                  <span>%</span>
+                                </div>
+                              </div>
+                              <div className="cr-payout-detail-row cr-payout-amount-row">
+                                <span className="cr-detail-label">Amount owed</span>
+                                <strong className="cr-payout-amount" style={hasOverride ? { color: '#b85c00' } : {}}>
+                                  ${amountOwed}{hasOverride && <span style={{ fontSize: '0.75em', fontWeight: 400, marginLeft: 4 }}>overridden</span>}
+                                </strong>
+                              </div>
+                              {!isPaid && (
+                                <div className="cr-payout-detail-row">
+                                  <span className="cr-detail-label">Override $</span>
+                                  <input
+                                    type="number" min="0" step="0.01"
+                                    placeholder={calculated}
+                                    value={p.payout_override != null ? p.payout_override : ''}
+                                    style={{ width: '90px', padding: '3px 6px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9em' }}
+                                    onChange={e => {
+                                      const val = e.target.value === '' ? null : parseFloat(e.target.value);
+                                      savePayoutRecord(p.id, { payout_override: val });
+                                    }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="cr-payout-actions">
+                              <label className="cr-payout-paid-label">
+                                <input
+                                  type="checkbox"
+                                  checked={isPaid}
+                                  disabled={savingPayout === p.id}
+                                  onChange={e => {
+                                    const nowPaid = e.target.checked;
+                                    savePayoutRecord(p.id, {
+                                      payout_paid:      nowPaid,
+                                      payout_paid_date: nowPaid ? new Date().toISOString().split('T')[0] : null,
+                                    });
+                                  }}
+                                />
+                                {savingPayout === p.id ? <span className="cr-spinner sm"></span> : 'Mark as paid'}
+                              </label>
+                              {isPaid && p.payout_paid_date && (
+                                <div className="cr-payout-paid-date-row">
+                                  <span className="cr-detail-label">Paid on</span>
+                                  <input
+                                    type="date"
+                                    value={p.payout_paid_date}
+                                    onChange={e => savePayoutRecord(p.id, { payout_paid_date: e.target.value })}
+                                    className="cr-payout-date-input"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
           )}
         </main>
       )}
