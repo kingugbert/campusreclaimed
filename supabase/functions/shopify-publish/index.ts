@@ -245,8 +245,7 @@ serve(async (req) => {
 
     console.log("Product created:", shopifyProductId);
 
-    // ── Publish to Shop channel ──
-    // Look up the Shop publication ID and add the product to it
+    // ── Publish to ALL sales channels ──
     try {
       const pubRes = await fetch(
         `https://${shopifyStore}/admin/api/2024-10/publications.json`,
@@ -254,28 +253,32 @@ serve(async (req) => {
       );
       if (pubRes.ok) {
         const pubData = await pubRes.json();
-        const shopPub = pubData.publications?.find(
-          (p: Record<string, unknown>) =>
-            (p.name as string)?.toLowerCase().includes('shop') &&
-            !(p.name as string)?.toLowerCase().includes('shopify')
-        );
-        if (shopPub) {
-          const listingRes = await fetch(
-            `https://${shopifyStore}/admin/api/2024-10/publications/${shopPub.id}/product_publications.json`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
-              body: JSON.stringify({ product_publication: { product_id: shopifyProductId } }),
+        const allPubs: Record<string, unknown>[] = pubData.publications || [];
+        console.log(`Found ${allPubs.length} publication(s):`, allPubs.map((p) => p.name));
+
+        await Promise.allSettled(
+          allPubs.map(async (pub) => {
+            const listingRes = await fetch(
+              `https://${shopifyStore}/admin/api/2024-10/publications/${pub.id}/product_publications.json`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+                body: JSON.stringify({ product_publication: { product_id: shopifyProductId } }),
+              }
+            );
+            if (listingRes.ok) console.log(`Published to channel: ${pub.name}`);
+            else {
+              const errText = await listingRes.text();
+              // 422 = already published to this channel — not an error
+              if (listingRes.status !== 422) console.warn(`Channel "${pub.name}" failed (${listingRes.status}):`, errText);
             }
-          );
-          if (listingRes.ok) console.log(`Published to Shop channel (publication: ${shopPub.id})`);
-          else console.warn("Shop channel publish failed:", await listingRes.text());
-        } else {
-          console.log("Shop publication not found — skipping");
-        }
+          })
+        );
+      } else {
+        console.warn("Could not fetch publications list:", pubRes.status);
       }
-    } catch (shopErr) {
-      console.warn("Shop channel error (non-fatal):", shopErr.message);
+    } catch (chanErr) {
+      console.warn("Channel publish error (non-fatal):", chanErr.message);
     }
 
     // Add to collections (Option B)
@@ -283,7 +286,9 @@ serve(async (req) => {
     console.log("Target collections:", targetCollections);
     await Promise.allSettled(targetCollections.map(col => addToCollection(shopifyStore, accessToken, shopifyProductId, col)));
 
-    const { error: updateError } = await supabase.from("donation_items").update({ status: "listed", shopify_product_id: shopifyProductId, shopify_variant_id: shopifyVariantId, price: price }).eq("id", itemId);
+    const dbUpdate: Record<string, unknown> = { status: "listed", shopify_product_id: shopifyProductId, shopify_variant_id: shopifyVariantId, price: price };
+    if (body.retail_price != null) dbUpdate.retail_price = body.retail_price;
+    const { error: updateError } = await supabase.from("donation_items").update(dbUpdate).eq("id", itemId);
 
     if (updateError) {
       return new Response(JSON.stringify({ warning: "Product created on Shopify but local update failed", shopify_product_id: shopifyProductId, details: updateError.message }), { status: 207, headers: { ...corsHeaders, "Content-Type": "application/json" } });

@@ -192,25 +192,25 @@ function App() {
   /* ── auth ── */
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [userRole, setUserRole] = useState('admin'); // 'admin' | 'ambassador'
 
   useEffect(() => {
-    // Check for existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+      setUserRole(session?.user?.user_metadata?.role || 'admin');
       setAuthLoading(false);
     });
-
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      setUserRole(session?.user?.user_metadata?.role || 'admin');
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     setSession(null);
+    setUserRole('admin');
   };
 
   /* ── navigation ── */
@@ -278,10 +278,44 @@ function App() {
   const [payouts, setPayouts]                     = useState([]);
   const [payoutsLoading, setPayoutsLoading]       = useState(false);
   const [payoutFilter, setPayoutFilter]           = useState('unpaid'); // 'all' | 'unpaid' | 'paid'
+  const [payoutSearch, setPayoutSearch]           = useState('');
   const [savingPayout, setSavingPayout]           = useState(null); // item id being saved
+
+  /* ── users tab state (admin only) ── */
+  const [ambassadors, setAmbassadors]             = useState([]);
+  const [ambassadorsLoading, setAmbassadorsLoading] = useState(false);
+  const [newAmbForm, setNewAmbForm]               = useState({ name: '', email: '', password: '' });
+  const [creatingAmb, setCreatingAmb]             = useState(false);
+  const [ambMessage, setAmbMessage]               = useState(null);
+  const [resetLinks, setResetLinks]               = useState({});
+
+  /* ── ambassador portal state ── */
+  const [ambTab, setAmbTab]                       = useState('totes');
+  const [totes, setTotes]                         = useState([]);
+  const [totesLoading, setTotesLoading]           = useState(false);
+  const [expandedTote, setExpandedTote]           = useState(null);
+  const [showNewTote, setShowNewTote]             = useState(false);
+  const [newToteForm, setNewToteForm]             = useState({ donorId: '', pickupDate: new Date().toISOString().split('T')[0] });
+  const [creatingTote, setCreatingTote]           = useState(false);
+  const [addingToTote, setAddingToTote]           = useState(null);
+  const [toteItemForm, setToteItemForm]           = useState({ itemDescription: '', metadata: {} });
+  const [toteItemFiles, setToteItemFiles]         = useState([]);
+  const [toteItemPreviews, setToteItemPreviews]   = useState([]);
+  const [toteAiStatus, setToteAiStatus]           = useState('idle');
+  const [savingToteItem, setSavingToteItem]       = useState(false);
+  const [myItems, setMyItems]                     = useState([]);
+  const [myItemsLoading, setMyItemsLoading]       = useState(false);
+
+  /* ── tote requests state (ambassador tasks + admin view) ── */
+  const [toteRequests, setToteRequests]           = useState([]);
+  const [toteRequestsLoading, setToteRequestsLoading] = useState(false);
+  const [reassigningId, setReassigningId]         = useState(null);
   const [agreementSearch, setAgreementSearch]     = useState('');
   const [agreementTypeFilter, setAgreementTypeFilter] = useState('all');
   const [aiStatus, setAiStatus] = useState({}); // { itemKey: 'analyzing' | 'done' | 'error' }
+  /* ── pickup scheduling state ── */
+  const [pickupWindowInputs, setPickupWindowInputs]     = useState({}); // { req.id: 'text...' }
+  const [sendingPickupSchedule, setSendingPickupSchedule] = useState(null); // req.id being scheduled
 
   /* ════════════════════════════════════════════════
      DONOR SEARCH (for donation form)
@@ -458,20 +492,18 @@ function App() {
           id, item_description, shopify_payout, payout_percentage,
           payout_paid, payout_paid_date, payout_override, sold_at, buyer_name,
           agreement_type, price,
-          donation:donations!inner(
-            donor:donors!inner(id, donor_name, donor_email)
+          donation:donations(
+            donor:donors(id, donor_name, donor_email)
           )
         `)
         .eq('status', 'sold')
-        .eq('agreement_type', 'consignment')
         .order('sold_at', { ascending: false });
       if (itemsErr) throw itemsErr;
 
       // Fetch all participation agreements to get Venmo handles
       const { data: agmts } = await supabase
         .from('participation_agreements')
-        .select('first_name, last_name, email, venmo_handle')
-        .eq('agreement_type', 'consignment');
+        .select('first_name, last_name, email, venmo_handle');
 
       // Build a Venmo lookup by email and name
       const venmoByEmail = {};
@@ -500,6 +532,28 @@ function App() {
     if (tab === 'donors' && donorSubTab === 'payouts') fetchPayouts();
   }, [tab, donorSubTab, fetchPayouts]);
 
+  /* ── ambassador portal: fetch totes + donors on mount ── */
+  useEffect(() => {
+    if (userRole === 'ambassador' && session) {
+      fetchTotes();
+      fetchDonors();
+    }
+  }, [userRole, session]);
+
+  /* ── ambassador portal: fetch my items when tab switches ── */
+  useEffect(() => {
+    if (userRole === 'ambassador' && ambTab === 'my-items') fetchMyItems();
+  }, [userRole, ambTab]);
+
+  /* ── tote requests: fetch when tasks tab opens ── */
+  useEffect(() => {
+    if (userRole === 'ambassador' && ambTab === 'tasks') fetchToteRequests();
+  }, [userRole, ambTab]);
+
+  useEffect(() => {
+    if (userRole === 'admin' && tab === 'users') { fetchAmbassadors(); fetchToteRequests(); }
+  }, [userRole, tab]);
+
   /* ── save payout changes (percentage, paid status, paid date) ── */
   const savePayoutRecord = async (itemId, updates) => {
     if (!supabase) return;
@@ -515,48 +569,352 @@ function App() {
     finally { setSavingPayout(null); }
   };
 
-  /* ── export payouts to CSV ── */
   const exportPayoutsCSV = () => {
-    const headers = [
-      'Donor Name', 'Email', 'Venmo Handle', 'Item Description',
-      'Sold Date', 'Buyer', 'Sale Amount', 'Consignor %',
-      'Calculated Payout', 'Override Payout', 'Effective Payout',
-      'Paid', 'Paid Date'
-    ];
+    const headers = ['Agreement Type','Donor Name','Email','Venmo Handle','Item Description','Sold Date','Buyer','Sale Amount','Consignor %','Calculated Payout','Override Payout','Effective Payout','Paid','Paid Date'];
     const rows = payouts.map(p => {
-      const donor      = p.donation?.donor;
-      const saleAmt    = parseFloat(p.shopify_payout || p.price || 0);
-      const pct        = parseFloat(p.payout_percentage || 20);
-      const calculated = (saleAmt * pct / 100).toFixed(2);
-      const override   = p.payout_override != null ? parseFloat(p.payout_override).toFixed(2) : '';
-      const effective  = p.payout_override != null ? parseFloat(p.payout_override).toFixed(2) : calculated;
-      return [
-        donor?.donor_name || '',
-        donor?.donor_email || '',
-        p.venmo_handle || '',
-        p.item_description || '',
-        p.sold_at ? p.sold_at.split('T')[0] : '',
-        p.buyer_name || '',
-        saleAmt.toFixed(2),
-        pct + '%',
-        calculated,
-        override,
-        effective,
-        p.payout_paid ? 'Yes' : 'No',
-        p.payout_paid_date || '',
-      ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
+      const donor = p.donation?.donor;
+      const isDonation = p.agreement_type === 'donation';
+      const saleAmt = parseFloat(p.shopify_payout || p.price || 0);
+      const pct = parseFloat(p.payout_percentage || 20);
+      const calculated = isDonation ? 'N/A' : (saleAmt * pct / 100).toFixed(2);
+      const override = isDonation ? 'N/A' : (p.payout_override != null ? parseFloat(p.payout_override).toFixed(2) : '');
+      const effective = isDonation ? 'N/A' : (p.payout_override != null ? parseFloat(p.payout_override).toFixed(2) : (saleAmt * pct / 100).toFixed(2));
+      const agreementLabel = isDonation ? 'Donation' : 'Consignment';
+      return [agreementLabel,donor?.donor_name||'',donor?.donor_email||'',p.venmo_handle||'',p.item_description||'',p.sold_at?p.sold_at.split('T')[0]:'',p.buyer_name||'',saleAmt.toFixed(2),isDonation?'N/A':pct+'%',calculated,override,effective,p.payout_paid?'Yes':'No',p.payout_paid_date||''].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',');
     });
-    const csv  = [headers.join(','), ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `campus-reclaimed-payouts-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
+    const csv = [headers.join(','),...rows].join('\n');
+    const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href=url; a.download=`campus-reclaimed-payouts-${new Date().toISOString().split('T')[0]}.csv`; a.click();
     URL.revokeObjectURL(url);
   };
 
-  /* ── fetch donations for a specific donor ── */
+  /* ════════════════════════════════════════════════
+     ADMIN — AMBASSADOR USER MANAGEMENT
+     ════════════════════════════════════════════════ */
+  const fetchAmbassadors = async () => {
+    if (!supabase) return;
+    setAmbassadorsLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('manage-users', {
+        body: { action: 'list' },
+      });
+      if (error) throw error;
+      setAmbassadors(data.ambassadors || []);
+    } catch (err) { console.error('Fetch ambassadors error:', err); }
+    finally { setAmbassadorsLoading(false); }
+  };
+
+  const createAmbassador = async () => {
+    if (!newAmbForm.name || !newAmbForm.email || !newAmbForm.password) {
+      setAmbMessage({ type: 'error', text: 'Name, email and password are all required.' });
+      return;
+    }
+    setCreatingAmb(true);
+    setAmbMessage(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('manage-users', {
+        body: { action: 'create', ...newAmbForm },
+      });
+      if (error) throw error;
+      setAmbMessage({ type: 'success', text: `Ambassador ${newAmbForm.email} created.` });
+      setNewAmbForm({ name: '', email: '', password: '' });
+      fetchAmbassadors();
+    } catch (err) {
+      setAmbMessage({ type: 'error', text: err.message || 'Failed to create ambassador.' });
+    } finally { setCreatingAmb(false); }
+  };
+
+  const removeAmbassador = async (userId, email) => {
+    if (!window.confirm(`Remove ambassador ${email}? This cannot be undone.`)) return;
+    try {
+      const { error } = await supabase.functions.invoke('manage-users', {
+        body: { action: 'remove', userId },
+      });
+      if (error) throw error;
+      setAmbassadors(prev => prev.filter(a => a.id !== userId));
+    } catch (err) { console.error('Remove ambassador error:', err); }
+  };
+
+  const resetAmbassadorPassword = async (userId, email) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('manage-users', {
+        body: { action: 'reset_password', userId, email },
+      });
+      if (error) throw error;
+      setResetLinks(prev => ({ ...prev, [userId]: data.reset_link }));
+    } catch (err) { console.error('Reset password error:', err); }
+  };
+
+  /* ════════════════════════════════════════════════
+     AMBASSADOR PORTAL — TOTES & ITEMS
+     ════════════════════════════════════════════════ */
+  const fetchTotes = async () => {
+    if (!supabase) return;
+    setTotesLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('totes')
+        .select(`*, donor:donors(id, donor_name, donor_email, phone_number),
+                 items:donation_items(id, sku, item_description, metadata, status)`)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setTotes(data || []);
+    } catch (err) { console.error('Fetch totes error:', err); }
+    finally { setTotesLoading(false); }
+  };
+
+  const fetchMyItems = async () => {
+    if (!supabase || !session) return;
+    setMyItemsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('donation_items')
+        .select(`*, tote:totes(tote_label, donor:donors(donor_name))`)
+        .eq('uploaded_by', session.user.id)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setMyItems(data || []);
+    } catch (err) { console.error('Fetch my items error:', err); }
+    finally { setMyItemsLoading(false); }
+  };
+
+  const createTote = async () => {
+    if (!newToteForm.donorId || !newToteForm.pickupDate) return;
+    setCreatingTote(true);
+    try {
+      const { data, error } = await supabase
+        .from('totes')
+        .insert({ donor_id: newToteForm.donorId, pickup_date: newToteForm.pickupDate, created_by: session?.user?.id })
+        .select(`*, donor:donors(donor_name)`)
+        .single();
+      if (error) throw error;
+      setTotes(prev => [{ ...data, items: [] }, ...prev]);
+      setShowNewTote(false);
+      setNewToteForm({ donorId: '', pickupDate: new Date().toISOString().split('T')[0] });
+      setExpandedTote(data.id);
+    } catch (err) { console.error('Create tote error:', err); }
+    finally { setCreatingTote(false); }
+  };
+
+  const analyzeToteItemImage = async (file) => {
+    setToteAiStatus('analyzing');
+    try {
+      const reader = new FileReader();
+      const dataUrl = await new Promise(resolve => { reader.onloadend = () => resolve(reader.result); reader.readAsDataURL(file); });
+      const base64 = String(dataUrl).split(',')[1];
+      const mediaType = String(dataUrl).split(';')[0].split(':')[1] || 'image/jpeg';
+      const { data, error } = await supabase.functions.invoke('analyze-item', { body: { base64, mediaType } });
+      if (error) throw error;
+      setToteItemForm(prev => ({
+        ...prev,
+        itemDescription: prev.itemDescription.trim() || data.description || prev.itemDescription,
+        metadata: { ...prev.metadata, ...(data.metadata || {}) },
+      }));
+      setToteAiStatus('done');
+    } catch (err) {
+      console.error('Tote AI error:', err);
+      setToteAiStatus('error');
+    }
+  };
+
+  const handleToteItemPhoto = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setToteItemFiles([file]);
+    const reader = new FileReader();
+    reader.onloadend = () => setToteItemPreviews([String(reader.result)]);
+    reader.readAsDataURL(file);
+    analyzeToteItemImage(file);
+    e.target.value = '';
+  };
+
+  const saveToteItem = async (toteId) => {
+    if (!toteItemForm.itemDescription.trim()) return;
+    setSavingToteItem(true);
+    try {
+      // Get next SKU via RPC
+      const { data: skuData, error: skuErr } = await supabase.rpc('generate_next_sku');
+      if (skuErr) throw skuErr;
+      const sku = skuData;
+
+      // Get the tote's donation_id (or create a donation for this tote if needed)
+      const tote = totes.find(t => t.id === toteId);
+      if (!tote) throw new Error('Tote not found');
+
+      // Find or create a donation record for this tote's donor + pickup date
+      let donationId;
+      const { data: existingDonation } = await supabase
+        .from('donations')
+        .select('id')
+        .eq('donor_id', tote.donor_id)
+        .eq('date_accepted', tote.pickup_date)
+        .maybeSingle();
+
+      if (existingDonation) {
+        donationId = existingDonation.id;
+      } else {
+        const { data: newDonation, error: donErr } = await supabase
+          .from('donations')
+          .insert({ donor_id: tote.donor_id, date_accepted: tote.pickup_date })
+          .select('id').single();
+        if (donErr) throw donErr;
+        donationId = newDonation.id;
+      }
+
+      // Upload photo if present
+      let imageUrl = null;
+      if (toteItemFiles[0]) {
+        const ext  = toteItemFiles[0].name.split('.').pop();
+        const path = `${tote.donor_id}/${toteId}/${sku}.${ext}`;
+        const { error: upErr } = await supabase.storage.from('donation-images').upload(path, toteItemFiles[0]);
+        if (!upErr) {
+          const { data: urlData } = supabase.storage.from('donation-images').getPublicUrl(path);
+          imageUrl = urlData.publicUrl;
+        }
+      }
+
+      // Insert item
+      const { data: newItem, error: itemErr } = await supabase
+        .from('donation_items')
+        .insert({
+          donation_id: donationId,
+          tote_id: toteId,
+          sku,
+          item_description: toteItemForm.itemDescription.trim(),
+          category: 'Clothing',
+          metadata: toteItemForm.metadata,
+          item_image_url: imageUrl,
+          uploaded_by: session?.user?.id,
+          status: 'in_storage',
+        })
+        .select('id, sku, item_description, metadata, status')
+        .single();
+      if (itemErr) throw itemErr;
+
+      // Update totes state
+      setTotes(prev => prev.map(t => t.id === toteId
+        ? { ...t, items: [...(t.items || []), newItem] }
+        : t
+      ));
+
+      // Reset form
+      setToteItemForm({ itemDescription: '', metadata: {} });
+      setToteItemFiles([]);
+      setToteItemPreviews([]);
+      setToteAiStatus('idle');
+      setAddingToTote(null);
+    } catch (err) { console.error('Save tote item error:', err); }
+    finally { setSavingToteItem(false); }
+  };
+
+  /* ════════════════════════════════════════════════
+     TOTE REQUESTS — fetch, status update, reassign
+     ════════════════════════════════════════════════ */
+  const fetchToteRequests = async () => {
+    if (!supabase) return;
+    setToteRequestsLoading(true);
+    try {
+      let query = supabase
+        .from('tote_requests')
+        .select(`*, ambassador:ambassador_profiles(id, full_name, email)`)
+        .not('status', 'in', '("complete","cancelled")')
+        .order('requested_at', { ascending: true });
+
+      // Ambassadors only see their own requests
+      if (userRole === 'ambassador' && session) {
+        query = query.eq('assigned_to', session.user.id);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setToteRequests(data || []);
+    } catch (err) { console.error('Fetch tote requests error:', err); }
+    finally { setToteRequestsLoading(false); }
+  };
+
+  const updateToteRequestStatus = async (id, status, extraFields = {}) => {
+    if (!supabase) return;
+    try {
+      const updates = { status, ...extraFields };
+      if (status === 'tote_out')       updates.tote_delivered_at = new Date().toISOString();
+      if (status === 'tote_picked_up') updates.tote_picked_up_at = new Date().toISOString();
+
+      const { error } = await supabase.from('tote_requests').update(updates).eq('id', id);
+      if (error) throw error;
+      setToteRequests(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r)
+        .filter(r => !['complete','cancelled'].includes(r.status)));
+
+      // When ambassador marks tote as delivered, send Email 2 (delivery reminder)
+      if (status === 'tote_out') {
+        const req = toteRequests.find(r => r.id === id);
+        if (req) {
+          await supabase.functions.invoke('tote-request', {
+            body: { action: 'send_delivery_reminder', email: req.student_email, name: req.student_name }
+          });
+        }
+      }
+      // When ambassador marks tote as picked up, send Email 5 or 6 (donation vs consignment)
+      if (status === 'tote_picked_up') {
+        await supabase.functions.invoke('tote-request', {
+          body: { action: 'send_pickup_confirmation', tote_request_id: id }
+        });
+      }
+    } catch (err) { console.error('Update tote request error:', err); }
+  };
+
+  const sendPickupSchedule = async (req) => {
+    const window = (pickupWindowInputs[req.id] || '').trim();
+    if (!window) return;
+    setSendingPickupSchedule(req.id);
+    try {
+      const { error } = await supabase.functions.invoke('tote-request', {
+        body: { action: 'send_pickup_schedule', tote_request_id: req.id, pickup_window: window }
+      });
+      if (error) throw error;
+      // pickup_window + pickup_scheduled_at are saved by the edge function; mirror locally
+      setToteRequests(prev => prev.map(r => r.id === req.id
+        ? { ...r, pickup_window: window, pickup_scheduled_at: new Date().toISOString() }
+        : r
+      ));
+      setPickupWindowInputs(prev => ({ ...prev, [req.id]: '' }));
+    } catch (err) { console.error('Send pickup schedule error:', err); }
+    finally { setSendingPickupSchedule(null); }
+  };
+
+  const reassignToteRequest = async (id, ambassadorId) => {
+    if (!supabase) return;
+    setReassigningId(id);
+    try {
+      const { error } = await supabase.from('tote_requests').update({ assigned_to: ambassadorId }).eq('id', id);
+      if (error) throw error;
+      const amb = ambassadors.find(a => a.id === ambassadorId);
+      setToteRequests(prev => prev.map(r => r.id === id
+        ? { ...r, assigned_to: ambassadorId, ambassador: amb }
+        : r
+      ));
+    } catch (err) { console.error('Reassign error:', err); }
+    finally { setReassigningId(null); }
+  };
+
+  // Helper: compute SLA status for color coding
+  const getSlaStatus = (request) => {
+    const now = Date.now();
+    if (request.status === 'pending') {
+      const age = now - new Date(request.requested_at).getTime();
+      if (age > 48 * 3600 * 1000)  return 'overdue';
+      if (age > 36 * 3600 * 1000)  return 'warning';
+      return 'ok';
+    }
+    if (request.status === 'tote_out' && request.tote_delivered_at) {
+      const age = now - new Date(request.tote_delivered_at).getTime();
+      if (age > 72 * 3600 * 1000)  return 'overdue';
+      if (age > 48 * 3600 * 1000)  return 'warning';
+      return 'ok';
+    }
+    return 'ok';
+  };
   const fetchDonorDonations = async (donorId) => {
     if (!supabase || donorDonations[donorId]) return;
     try {
@@ -788,6 +1146,7 @@ function App() {
             category: item.category || null,
             metadata: Object.keys(item.metadata || {}).length > 0 ? item.metadata : null,
             agreement_type: item.agreementType || null,
+            uploaded_by: session?.user?.id || null,
           }])
           .select('id').single();
         if (itemError) throw itemError;
@@ -829,6 +1188,8 @@ function App() {
       category: item.category || '',
       metadata: item.metadata || {},
       agreementType: item.agreement_type || '',
+      price: item.price != null ? String(item.price) : '',
+      retailPrice: item.retail_price != null ? String(item.retail_price) : '',
     });
   };
 
@@ -842,6 +1203,8 @@ function App() {
           category: editItemForm.category || null,
           metadata: Object.keys(editItemForm.metadata || {}).length > 0 ? editItemForm.metadata : null,
           agreement_type: editItemForm.agreementType || null,
+          price: editItemForm.price !== '' ? parseFloat(editItemForm.price) : null,
+          retail_price: editItemForm.retailPrice !== '' ? parseFloat(editItemForm.retailPrice) : null,
         })
         .eq('id', editingItem);
       if (error) throw error;
@@ -880,7 +1243,11 @@ function App() {
      ════════════════════════════════════════════════ */
   const startPublish = (item) => {
     setPublishingItem(item.id);
-    setPublishForm({ price: item.price || '', title: item.item_description });
+    // Pre-fill with retail_price if set, otherwise fall back to price
+    const preFillPrice = item.retail_price != null ? String(item.retail_price)
+                       : item.price != null        ? String(item.price)
+                       : '';
+    setPublishForm({ price: preFillPrice, title: item.item_description });
     setPriceSuggestion(null);
   };
 
@@ -913,10 +1280,14 @@ function App() {
     if (!supabase || !publishingItem || !publishForm.price) return;
     setPublishLoading(true);
     try {
+      // Find the item to pass retail_price through to the edge function
+      const publishItem = items.find(i => i.id === publishingItem);
+      const retailPrice = publishItem?.retail_price != null ? publishItem.retail_price : parseFloat(publishForm.price);
       const { data, error } = await supabase.functions.invoke('shopify-publish', {
         body: {
           itemId: publishingItem,
           price: parseFloat(publishForm.price),
+          retail_price: retailPrice,
           title: publishForm.title.trim() || undefined,
         },
       });
@@ -994,6 +1365,14 @@ function App() {
     else { setSortField(field); setSortDir('desc'); }
   };
 
+  /* ─── public routes (no auth required — check first before anything else) ─── */
+  if (window.location.pathname === '/agreement') {
+    return <AgreementPage />;
+  }
+  if (window.location.pathname === '/request-tote') {
+    return <ToteRequestPage />;
+  }
+
   /* ─── config warning ─── */
   if (!supabase) {
     return (
@@ -1011,14 +1390,6 @@ function App() {
         </div>
       </div>
     );
-  }
-
-  /* ─── public routes (no auth required) ─── */
-  if (window.location.pathname === '/agreement') {
-    return <AgreementPage />;
-  }
-  if (window.location.pathname === '/request-tote') {
-    return <ToteRequestPage />;
   }
 
   /* ─── auth loading ─── */
@@ -1059,7 +1430,359 @@ function App() {
         </button>
       </header>
 
+      {/* ════════════════════════════════════════════════
+          AMBASSADOR PORTAL
+          ════════════════════════════════════════════════ */}
+      {userRole === 'ambassador' && (() => {
+        return (
+          <div className="cr-amb-portal">
+            {/* Ambassador sub-nav */}
+            <nav className="cr-nav three" role="tablist">
+              <button role="tab" className={`cr-nav-btn ${ambTab === 'totes' ? 'active' : ''}`}
+                onClick={() => setAmbTab('totes')}>
+                🧺 Tote Intake
+              </button>
+              <button role="tab" className={`cr-nav-btn ${ambTab === 'tasks' ? 'active' : ''}`}
+                onClick={() => { setAmbTab('tasks'); fetchToteRequests(); }}>
+                📋 Tasks
+                {toteRequests.filter(r => getSlaStatus(r) === 'overdue').length > 0 && (
+                  <span className="cr-count" style={{ background: '#dc2626' }}>
+                    {toteRequests.filter(r => getSlaStatus(r) === 'overdue').length}
+                  </span>
+                )}
+              </button>
+              <button role="tab" className={`cr-nav-btn ${ambTab === 'my-items' ? 'active' : ''}`}
+                onClick={() => { setAmbTab('my-items'); fetchMyItems(); }}>
+                📦 My Items
+                {myItems.length > 0 && <span className="cr-count">{myItems.length}</span>}
+              </button>
+            </nav>
+
+            {/* ── TASKS TAB ── */}
+            {ambTab === 'tasks' && (
+              <main className="cr-main">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <h2 className="cr-section-title" style={{ margin: 0 }}>My Tasks</h2>
+                  <button className="cr-act edit" onClick={fetchToteRequests} disabled={toteRequestsLoading}>
+                    {toteRequestsLoading ? <span className="cr-spinner sm"></span> : '↻'} Refresh
+                  </button>
+                </div>
+                {toteRequestsLoading ? (
+                  <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading tasks…</p></div>
+                ) : toteRequests.length === 0 ? (
+                  <div className="cr-empty"><h3>No active tasks</h3><p>New tote requests will appear here when assigned to you.</p></div>
+                ) : (
+                  <div className="cr-task-list">
+                    {toteRequests.map(req => {
+                      const sla = getSlaStatus(req);
+                      return (
+                        <div key={req.id} className={`cr-task-card sla-${sla}`}>
+                          <div className="cr-task-header">
+                            <div>
+                              <strong>{req.student_name}</strong>
+                              <span className={`cr-task-status-badge ${req.status}`}>
+                                {req.status === 'pending' ? '📦 Deliver Tote' : req.status === 'tote_out' ? '🔄 Pick Up Tote' : '✓ Picked Up'}
+                              </span>
+                            </div>
+                            <span className={`cr-sla-badge sla-${sla}`}>
+                              {sla === 'overdue' ? '🔴 Overdue' : sla === 'warning' ? '🟡 Due Soon' : '🟢 On Track'}
+                            </span>
+                          </div>
+                          <div className="cr-task-details">
+                            <span>📍 {req.student_address}</span>
+                            {req.student_phone && <span>📞 {req.student_phone}</span>}
+                            {req.item_types && <span>👕 {req.item_types}</span>}
+                            <span className="cr-hint">Requested {new Date(req.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                          </div>
+                          <div className="cr-task-actions">
+                            {req.status === 'pending' && (
+                              <button className="cr-btn-primary sm"
+                                onClick={() => updateToteRequestStatus(req.id, 'tote_out')}>
+                                ✓ Mark Tote Delivered
+                              </button>
+                            )}
+                            {req.status === 'tote_out' && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                {!req.pickup_window ? (
+                                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                                    <input
+                                      type="text"
+                                      placeholder="e.g. Thursday, May 7th between 9 a.m. and 12 p.m."
+                                      value={pickupWindowInputs[req.id] || ''}
+                                      onChange={e => setPickupWindowInputs(prev => ({ ...prev, [req.id]: e.target.value }))}
+                                      style={{ flex: 1, minWidth: 220, padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+                                    />
+                                    <button className="cr-btn-primary sm"
+                                      onClick={() => sendPickupSchedule(req)}
+                                      disabled={sendingPickupSchedule === req.id || !(pickupWindowInputs[req.id] || '').trim()}>
+                                      {sendingPickupSchedule === req.id
+                                        ? <><span className="cr-spinner sm"></span> Sending…</>
+                                        : '📅 Send Pickup Schedule'}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: 13, color: '#555', background: '#f0f8f4', padding: '6px 10px', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                    <span>📅 Pickup scheduled: <strong>{req.pickup_window}</strong></span>
+                                    <button
+                                      onClick={() => setToteRequests(prev => prev.map(r => r.id === req.id ? { ...r, pickup_window: null } : r))}
+                                      style={{ fontSize: 12, color: '#1a3c34', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+                                      Reschedule
+                                    </button>
+                                  </div>
+                                )}
+                                <button className="cr-btn-primary sm"
+                                  onClick={() => updateToteRequestStatus(req.id, 'tote_picked_up')}>
+                                  ✓ Mark Tote Picked Up
+                                </button>
+                              </div>
+                            )}
+                            {req.status === 'tote_picked_up' && (
+                              <button className="cr-btn-primary sm"
+                                onClick={() => updateToteRequestStatus(req.id, 'complete')}>
+                                ✓ Mark Complete
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </main>
+            )}
+
+            {/* ── TOTES TAB ── */}
+            {ambTab === 'totes' && (
+              <main className="cr-main">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <h2 className="cr-section-title" style={{ margin: 0 }}>Tote Intake</h2>
+                  <button className="cr-btn-primary sm" onClick={() => setShowNewTote(true)}>
+                    + New Tote
+                  </button>
+                </div>
+
+                {/* New Tote Form */}
+                {showNewTote && (
+                  <div className="cr-amb-new-tote">
+                    <h3>Create New Tote</h3>
+                    <div className="cr-field-grid">
+                      <div className="cr-field">
+                        <label>Donor / Consignor <span className="cr-req">*</span></label>
+                        <select value={newToteForm.donorId}
+                          onChange={e => setNewToteForm(p => ({ ...p, donorId: e.target.value }))}>
+                          <option value="">Select donor…</option>
+                          {donors.map(d => <option key={d.id} value={d.id}>{d.donor_name}</option>)}
+                        </select>
+                      </div>
+                      <div className="cr-field">
+                        <label>Pickup Date <span className="cr-req">*</span></label>
+                        <input type="date" value={newToteForm.pickupDate}
+                          onChange={e => setNewToteForm(p => ({ ...p, pickupDate: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '.75rem', marginTop: '.75rem' }}>
+                      <button className="cr-btn-primary sm" onClick={createTote} disabled={creatingTote || !newToteForm.donorId}>
+                        {creatingTote ? <><span className="cr-spinner"></span> Creating…</> : 'Create Tote'}
+                      </button>
+                      <button className="cr-btn-secondary" onClick={() => setShowNewTote(false)}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tote list */}
+                {totesLoading ? (
+                  <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading totes…</p></div>
+                ) : totes.length === 0 ? (
+                  <div className="cr-empty"><h3>No totes yet</h3><p>Create your first tote above.</p></div>
+                ) : (
+                  <div className="cr-tote-list">
+                    {totes.map(tote => {
+                      const isExp = expandedTote === tote.id;
+                      const itemCount = (tote.items || []).length;
+                      const donor = tote.donor;
+                      return (
+                        <div key={tote.id} className={`cr-tote-card ${isExp ? 'expanded' : ''}`}>
+                          <button className="cr-card-header" onClick={() => setExpandedTote(isExp ? null : tote.id)}>
+                            <div className="cr-card-left">
+                              <div className="cr-donor-avatar">{tote.tote_label?.slice(-3)}</div>
+                              <div className="cr-card-info">
+                                <strong>{tote.tote_label}</strong>
+                                <span className="cr-card-donor">
+                                  {donor?.donor_name || '—'}
+                                  <span className="cr-tote-count">{itemCount} piece{itemCount !== 1 ? 's' : ''}</span>
+                                </span>
+                              </div>
+                            </div>
+                            <div className="cr-card-right">
+                              <span className="cr-tag location">{tote.pickup_date}</span>
+                              <svg className={`cr-chevron ${isExp ? 'open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
+                                <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </div>
+                          </button>
+
+                          {isExp && (
+                            <div className="cr-tote-detail">
+                              {/* Donor info */}
+                              <div className="cr-tote-donor-info">
+                                {donor?.donor_email && <span>📧 {donor.donor_email}</span>}
+                                {donor?.phone_number && <span>📞 {donor.phone_number}</span>}
+                              </div>
+
+                              {/* Item list */}
+                              {(tote.items || []).length > 0 && (
+                                <div className="cr-tote-items">
+                                  {tote.items.map(item => (
+                                    <div key={item.id} className="cr-tote-item-row">
+                                      <span className="cr-sku-badge">{item.sku}</span>
+                                      <span className="cr-tote-item-desc">{item.item_description}</span>
+                                      {item.metadata?.gender && <span className="cr-tag sm">{item.metadata.gender}</span>}
+                                      {item.metadata?.size && <span className="cr-tag sm">Size {item.metadata.size}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Add item form */}
+                              {addingToTote === tote.id ? (
+                                <div className="cr-amb-add-item">
+                                  <h4>Add Clothing Item</h4>
+                                  <div className="cr-field-grid">
+                                    <div className="cr-field cr-span-2">
+                                      <label>
+                                        Photo
+                                        {toteAiStatus === 'analyzing' && <span className="cr-ai-badge analyzing"><span className="cr-spinner sm"></span> Analyzing…</span>}
+                                        {toteAiStatus === 'done' && <span className="cr-ai-badge done">✦ AI filled</span>}
+                                        {toteAiStatus === 'error' && <span className="cr-ai-badge error">AI unavailable</span>}
+                                      </label>
+                                      {toteItemPreviews.length > 0 ? (
+                                        <div className="cr-upload-thumb" style={{ width: 100, height: 80 }}>
+                                          <img src={toteItemPreviews[0]} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
+                                          <button type="button" className="cr-upload-remove"
+                                            onClick={() => { setToteItemFiles([]); setToteItemPreviews([]); setToteAiStatus('idle'); }}>&times;</button>
+                                        </div>
+                                      ) : (
+                                        <label className="cr-file-label">
+                                          <div className="cr-upload-prompt compact">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                            <span className="cr-upload-text">Upload photo</span>
+                                          </div>
+                                          <input type="file" accept="image/*" capture="environment" className="cr-file-input" onChange={handleToteItemPhoto} />
+                                        </label>
+                                      )}
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Description <span className="cr-req">*</span></label>
+                                      <input type="text" placeholder="e.g. Red cotton t-shirt" value={toteItemForm.itemDescription}
+                                        onChange={e => setToteItemForm(p => ({ ...p, itemDescription: e.target.value }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Gender</label>
+                                      <select value={toteItemForm.metadata.gender || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, gender: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_GENDERS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Size</label>
+                                      <select value={toteItemForm.metadata.size || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, size: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_SIZES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Brand</label>
+                                      <input type="text" placeholder="e.g. Levi's" value={toteItemForm.metadata.brand || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, brand: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Color</label>
+                                      <input type="text" placeholder="e.g. Navy Blue" value={toteItemForm.metadata.color || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Fabric</label>
+                                      <select value={toteItemForm.metadata.fabric || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, fabric: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_FABRICS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>New With Tags?</label>
+                                      <select value={toteItemForm.metadata.nwt || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, nwt: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        <option value="Yes">Yes</option>
+                                        <option value="No">No</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '.75rem', marginTop: '.85rem' }}>
+                                    <button className="cr-btn-primary sm" onClick={() => saveToteItem(tote.id)}
+                                      disabled={savingToteItem || !toteItemForm.itemDescription.trim()}>
+                                      {savingToteItem ? <><span className="cr-spinner"></span> Saving…</> : 'Save Item + Assign SKU'}
+                                    </button>
+                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setToteItemForm({ itemDescription: '', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); }}>
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button className="cr-add-item-btn" onClick={() => setAddingToTote(tote.id)}>
+                                  + Add Clothing Item
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </main>
+            )}
+
+            {/* ── MY ITEMS TAB ── */}
+            {ambTab === 'my-items' && (
+              <main className="cr-main">
+                <h2 className="cr-section-title">My Items</h2>
+                {myItemsLoading ? (
+                  <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading…</p></div>
+                ) : myItems.length === 0 ? (
+                  <div className="cr-empty"><h3>No items yet</h3><p>Add items from the Tote Intake tab.</p></div>
+                ) : (
+                  <ul className="cr-list">
+                    {myItems.map(item => (
+                      <li key={item.id} className="cr-card">
+                        <div className="cr-card-header" style={{ cursor: 'default' }}>
+                          <div className="cr-card-left">
+                            <div className="cr-card-info">
+                              <span className="cr-sku-badge">{item.sku}</span>
+                              <strong style={{ marginTop: 4 }}>{item.item_description}</strong>
+                              <span className="cr-card-donor">
+                                {item.tote?.donor?.donor_name || '—'} · {item.tote?.tote_label || '—'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="cr-card-right">
+                            {item.metadata?.gender && <span className="cr-tag">{item.metadata.gender}</span>}
+                            {item.metadata?.size && <span className="cr-tag location">Size {item.metadata.size}</span>}
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </main>
+            )}
+          </div>
+        );
+      })()}
+
       {/* ═══ CATEGORY STRIP ═══ */}
+      {/* ════════════════════════════════════════════════
+          ADMIN INTERFACE (admin role only)
+          ════════════════════════════════════════════════ */}
+      {userRole === 'admin' && <>
       <section className="cr-categories" aria-label="Common donation categories">
         <div className="cr-categories-scroll">
           {CATEGORY_IMAGES.map((cat, i) => (
@@ -1072,7 +1795,7 @@ function App() {
       </section>
 
       {/* ═══ NAV TABS ═══ */}
-      <nav className="cr-nav three" role="tablist">
+      <nav className={`cr-nav ${userRole === 'admin' ? 'four' : 'three'}`} role="tablist">
         <button role="tab" aria-selected={tab === 'donate'}
           className={`cr-nav-btn ${tab === 'donate' ? 'active' : ''}`}
           onClick={() => setTab('donate')}>
@@ -1098,6 +1821,17 @@ function App() {
           </svg>
           Donors
         </button>
+        {userRole === 'admin' && (
+          <button role="tab" aria-selected={tab === 'users'}
+            className={`cr-nav-btn ${tab === 'users' ? 'active' : ''}`}
+            onClick={() => { setTab('users'); fetchAmbassadors(); }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
+              <path d="M12 11c2.21 0 4-1.79 4-4S14.21 3 12 3 8 4.79 8 7s1.79 4 4 4zm0 2c-4 0-8 1.79-8 4v1h16v-1c0-2.21-4-4-8-4z" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Users
+            {ambassadors.length > 0 && <span className="cr-count">{ambassadors.length}</span>}
+          </button>
+        )}
       </nav>
 
       {/* ═══ TAB: NEW DONATION ═══ */}
@@ -1840,6 +2574,26 @@ function App() {
                                   ))}
                                 </div>
                               </div>
+                              <div className="cr-field">
+                                <label>Consignor Price ($) <span style={{fontWeight:400,color:'#888',fontSize:'0.8em'}}>paid to donor</span></label>
+                                <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                                  <span style={{color:'#555'}}>$</span>
+                                  <input type="number" step="0.01" min="0" placeholder="0.00"
+                                    value={editItemForm.price}
+                                    onChange={e => setEditItemForm(p => ({ ...p, price: e.target.value }))}
+                                    style={{width:'120px'}} />
+                                </div>
+                              </div>
+                              <div className="cr-field">
+                                <label>Retail Price ($) <span style={{fontWeight:400,color:'#888',fontSize:'0.8em'}}>listed on Shopify</span></label>
+                                <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                                  <span style={{color:'#555'}}>$</span>
+                                  <input type="number" step="0.01" min="0" placeholder="0.00"
+                                    value={editItemForm.retailPrice || ''}
+                                    onChange={e => setEditItemForm(p => ({ ...p, retailPrice: e.target.value }))}
+                                    style={{width:'120px'}} />
+                                </div>
+                              </div>
                               <div className="cr-field cr-span-2">
                                 <label>Agreement Type</label>
                                 <div className="cr-agreement-toggle">
@@ -2295,7 +3049,7 @@ function App() {
 
                             <div className="cr-detail-actions">
                               {/* Publish button — only for in_storage items */}
-                              {(item.status === 'in_storage' || !item.status) && publishingItem !== item.id && (
+                              {(item.status === 'in_storage' || !item.status) && publishingItem !== item.id && item.category !== 'Clothing' && (
                                 <button className="cr-act publish" onClick={() => startPublish(item)}>
                                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="15" height="15">
                                     <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" strokeLinecap="round" strokeLinejoin="round" />
@@ -2651,7 +3405,7 @@ function App() {
           )}
           {donorSubTab === 'payouts' && (
             <div className="cr-payouts-panel">
-              <div className="cr-toolbar">
+              <div className="cr-toolbar" style={{flexWrap:'wrap',gap:'8px'}}>
                 <div className="cr-payout-filter">
                   {[['unpaid', 'Unpaid'], ['paid', 'Paid'], ['all', 'All']].map(([val, label]) => (
                     <button key={val}
@@ -2661,6 +3415,13 @@ function App() {
                     </button>
                   ))}
                 </div>
+                <input
+                  type="text"
+                  placeholder="🔍 Search by name, item, email…"
+                  value={payoutSearch}
+                  onChange={e => setPayoutSearch(e.target.value)}
+                  style={{flex:'1',minWidth:'180px',padding:'6px 10px',border:'1px solid #ddd',borderRadius:'6px',fontSize:'0.9em'}}
+                />
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button className="cr-act edit cr-refresh-btn" onClick={exportPayoutsCSV} disabled={payouts.length === 0} title="Download CSV">
                     ⬇ Export CSV
@@ -2674,10 +3435,19 @@ function App() {
               {payoutsLoading ? (
                 <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading payouts…</p></div>
               ) : (() => {
+                const searchLower = payoutSearch.trim().toLowerCase();
                 const filtered = payouts.filter(p => {
-                  if (payoutFilter === 'unpaid') return !p.payout_paid;
-                  if (payoutFilter === 'paid')   return !!p.payout_paid;
-                  return true;
+                  if (payoutFilter === 'unpaid' && p.payout_paid)  return false;
+                  if (payoutFilter === 'paid'   && !p.payout_paid) return false;
+                  if (!searchLower) return true;
+                  const donor = p.donation?.donor;
+                  return (
+                    (donor?.donor_name  || '').toLowerCase().includes(searchLower) ||
+                    (donor?.donor_email || '').toLowerCase().includes(searchLower) ||
+                    (p.item_description || '').toLowerCase().includes(searchLower) ||
+                    (p.buyer_name       || '').toLowerCase().includes(searchLower) ||
+                    (p.venmo_handle     || '').toLowerCase().includes(searchLower)
+                  );
                 });
 
                 if (filtered.length === 0) return (
@@ -2687,8 +3457,13 @@ function App() {
                   </div>
                 );
 
-                const totalOwed = filtered.filter(p => !p.payout_paid)
-                  .reduce((sum, p) => sum + ((p.shopify_payout || p.price || 0) * (p.payout_percentage || 20) / 100), 0);
+                const totalOwed = filtered.filter(p => !p.payout_paid && p.agreement_type !== 'donation')
+                  .reduce((sum, p) => {
+                    const override = p.payout_override != null ? parseFloat(p.payout_override) : null;
+                    const sale = parseFloat(p.shopify_payout || p.price || 0);
+                    const pct  = parseFloat(p.payout_percentage || 20);
+                    return sum + (override != null ? override : (sale * pct / 100));
+                  }, 0);
 
                 return (
                   <>
@@ -2701,12 +3476,13 @@ function App() {
                     <div className="cr-payout-list">
                       {filtered.map(p => {
                         const donor       = p.donation?.donor;
-                        const saleAmount   = parseFloat(p.shopify_payout || p.price || 0);
-                        const pct          = parseFloat(p.payout_percentage || 20);
-                        const calculated   = (saleAmount * pct / 100).toFixed(2);
-                        const hasOverride  = p.payout_override != null && p.payout_override !== '';
-                        const amountOwed   = hasOverride ? parseFloat(p.payout_override).toFixed(2) : calculated;
-                        const isPaid       = !!p.payout_paid;
+                        const isDonation  = p.agreement_type === 'donation';
+                        const saleAmount  = parseFloat(p.shopify_payout || p.price || 0);
+                        const pct         = parseFloat(p.payout_percentage || 20);
+                        const calculated  = (saleAmount * pct / 100).toFixed(2);
+                        const hasOverride = p.payout_override != null && p.payout_override !== '';
+                        const amountOwed  = hasOverride ? parseFloat(p.payout_override).toFixed(2) : calculated;
+                        const isPaid      = !!p.payout_paid;
 
                         return (
                           <div key={p.id} className={`cr-payout-card ${isPaid ? 'paid' : 'unpaid'}`}>
@@ -2718,8 +3494,15 @@ function App() {
                                   {p.venmo_handle && <span className="cr-payout-venmo">💸 {p.venmo_handle}</span>}
                                 </div>
                               </div>
-                              <div className={`cr-payout-status-badge ${isPaid ? 'paid' : 'unpaid'}`}>
-                                {isPaid ? '✓ Paid' : '⏳ Unpaid'}
+                              <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
+                                <span style={{fontSize:'0.75em',padding:'2px 7px',borderRadius:'10px',fontWeight:600,
+                                  background: isDonation ? '#e8f5e9' : '#e3f2fd',
+                                  color: isDonation ? '#2e7d32' : '#1565c0'}}>
+                                  {isDonation ? '🎁 Donation' : '🔄 Consignment'}
+                                </span>
+                                <div className={`cr-payout-status-badge ${isPaid ? 'paid' : 'unpaid'}`}>
+                                  {isPaid ? '✓ Paid' : '⏳ Unpaid'}
+                                </div>
                               </div>
                             </div>
 
@@ -2742,31 +3525,26 @@ function App() {
                               </div>
                               <div className="cr-payout-detail-row">
                                 <span className="cr-detail-label">Consignor %</span>
-                                <div className="cr-payout-pct-input">
-                                  <input
-                                    type="number" min="0" max="100" step="1"
-                                    value={pct}
-                                    disabled={isPaid}
-                                    onChange={e => {
-                                      const val = parseFloat(e.target.value) || 20;
-                                      savePayoutRecord(p.id, { payout_percentage: val });
-                                    }}
-                                  />
-                                  <span>%</span>
-                                </div>
+                                {isDonation
+                                  ? <span style={{color:'#999',fontStyle:'italic'}}>N/A</span>
+                                  : <div className="cr-payout-pct-input">
+                                      <input
+                                        type="number" min="0" max="100" step="1"
+                                        value={pct}
+                                        disabled={isPaid}
+                                        onChange={e => {
+                                          const val = parseFloat(e.target.value) || 20;
+                                          savePayoutRecord(p.id, { payout_percentage: val });
+                                        }}
+                                      />
+                                      <span>%</span>
+                                    </div>
+                                }
                               </div>
-                              <div className="cr-payout-detail-row cr-payout-amount-row">
-                                <span className="cr-detail-label">Amount owed</span>
-                                <strong className="cr-payout-amount" style={hasOverride ? { color: '#b85c00' } : {}}>
-                                  ${amountOwed}{hasOverride && <span style={{ fontSize: '0.75em', fontWeight: 400, marginLeft: 4 }}>overridden</span>}
-                                </strong>
-                              </div>
-                              {!isPaid && (
+                              {!isPaid && !isDonation && (
                                 <div className="cr-payout-detail-row">
                                   <span className="cr-detail-label">Override $</span>
-                                  <input
-                                    type="number" min="0" step="0.01"
-                                    placeholder={calculated}
+                                  <input type="number" min="0" step="0.01" placeholder={calculated}
                                     value={p.payout_override != null ? p.payout_override : ''}
                                     style={{ width: '90px', padding: '3px 6px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9em' }}
                                     onChange={e => {
@@ -2776,6 +3554,13 @@ function App() {
                                   />
                                 </div>
                               )}
+                              <div className="cr-payout-detail-row cr-payout-amount-row">
+                                <span className="cr-detail-label">Amount owed</span>
+                                {isDonation
+                                  ? <strong className="cr-payout-amount" style={{color:'#999',fontStyle:'italic'}}>N/A</strong>
+                                  : <strong className="cr-payout-amount">${amountOwed}</strong>
+                                }
+                              </div>
                             </div>
 
                             <div className="cr-payout-actions">
@@ -2817,6 +3602,165 @@ function App() {
           )}
         </main>
       )}
+
+      {/* ═══ TAB: USERS (admin only) ═══ */}
+      {tab === 'users' && userRole === 'admin' && (
+        <main className="cr-main">
+          <h2 className="cr-section-title">Ambassador Users</h2>
+          <p className="cr-section-desc">Ambassadors can log in to add tote inventory. They see only what they uploaded.</p>
+
+          {/* Create new ambassador */}
+          <div className="cr-users-create-card">
+            <h3 className="cr-users-create-title">Add New Ambassador</h3>
+            {ambMessage && (
+              <div className={`cr-toast ${ambMessage.type}`}>{ambMessage.text}</div>
+            )}
+            <div className="cr-field-grid">
+              <div className="cr-field">
+                <label>Full Name <span className="cr-req">*</span></label>
+                <input type="text" placeholder="Jane Smith" value={newAmbForm.name}
+                  onChange={e => setNewAmbForm(p => ({ ...p, name: e.target.value }))} />
+              </div>
+              <div className="cr-field">
+                <label>Email <span className="cr-req">*</span></label>
+                <input type="email" placeholder="jane@wfu.edu" value={newAmbForm.email}
+                  onChange={e => setNewAmbForm(p => ({ ...p, email: e.target.value }))} />
+              </div>
+              <div className="cr-field">
+                <label>Password <span className="cr-req">*</span></label>
+                <input type="password" placeholder="Min. 8 characters" value={newAmbForm.password}
+                  onChange={e => setNewAmbForm(p => ({ ...p, password: e.target.value }))} />
+              </div>
+              <div className="cr-field" style={{ justifyContent: 'flex-end' }}>
+                <button className="cr-btn-primary" onClick={createAmbassador} disabled={creatingAmb}>
+                  {creatingAmb ? <><span className="cr-spinner"></span> Creating…</> : 'Create Ambassador'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* List ambassadors */}
+          <div className="cr-users-list">
+            <div className="cr-users-list-header">
+              <h3>Active Ambassadors</h3>
+              <button className="cr-act edit" onClick={fetchAmbassadors} disabled={ambassadorsLoading}>
+                {ambassadorsLoading ? <span className="cr-spinner sm"></span> : '↻'} Refresh
+              </button>
+            </div>
+            {ambassadorsLoading ? (
+              <div className="cr-loading"><span className="cr-spinner lg"></span></div>
+            ) : ambassadors.filter(a => a.active).length === 0 ? (
+              <div className="cr-empty"><h3>No ambassadors yet</h3><p>Create one above.</p></div>
+            ) : (
+              <table className="cr-agreements-table">
+                <thead>
+                  <tr><th>Name</th><th>Email</th><th>Created</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {ambassadors.filter(a => a.active).map(a => (
+                    <tr key={a.id}>
+                      <td><strong>{a.full_name}</strong></td>
+                      <td>{a.email}</td>
+                      <td className="cr-agreements-date">{a.created_at ? new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          <button className="cr-act edit" onClick={() => resetAmbassadorPassword(a.id, a.email)}>
+                            Reset Password
+                          </button>
+                          <button className="cr-act danger" onClick={() => removeAmbassador(a.id, a.email)}>
+                            Remove
+                          </button>
+                        </div>
+                        {resetLinks[a.id] && (
+                          <div className="cr-reset-link-box">
+                            <span className="cr-hint">Reset link (share privately):</span>
+                            <input type="text" readOnly value={resetLinks[a.id]}
+                              onClick={e => e.target.select()}
+                              className="cr-reset-link-input" />
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* ── Active Tote Requests with reassignment ── */}
+          <div className="cr-users-list" style={{ marginTop: '1.5rem' }}>
+            <div className="cr-users-list-header">
+              <h3>Active Tote Requests</h3>
+              <button className="cr-act edit" onClick={fetchToteRequests} disabled={toteRequestsLoading}>
+                {toteRequestsLoading ? <span className="cr-spinner sm"></span> : '↻'} Refresh
+              </button>
+            </div>
+            {toteRequestsLoading ? (
+              <div className="cr-loading"><span className="cr-spinner lg"></span></div>
+            ) : toteRequests.length === 0 ? (
+              <p className="cr-section-desc" style={{ marginTop: '.5rem' }}>No active tote requests yet.</p>
+            ) : (
+              <div className="cr-task-list">
+                {toteRequests.map(req => {
+                  const sla = getSlaStatus(req);
+                  return (
+                    <div key={req.id} className={`cr-task-card sla-${sla}`}>
+                      <div className="cr-task-header">
+                        <div style={{ flex: 1 }}>
+                          <strong>{req.student_name}</strong>
+                          <span style={{ fontSize: '.8rem', color: '#888', marginLeft: 8 }}>{req.student_email}</span>
+                          <span className={`cr-task-status-badge ${req.status}`}>
+                            {req.status === 'pending' ? 'Pending Delivery' : req.status === 'tote_out' ? 'Tote Out' : 'Picked Up'}
+                          </span>
+                        </div>
+                        <span className={`cr-sla-badge sla-${sla}`}>
+                          {sla === 'overdue' ? '🔴 Overdue' : sla === 'warning' ? '🟡 Due Soon' : '🟢 On Track'}
+                        </span>
+                      </div>
+                      <div className="cr-task-details">
+                        <span>📍 {req.student_address}</span>
+                        {req.student_phone && <span>📞 {req.student_phone}</span>}
+                        {req.item_types && <span>👕 {req.item_types}</span>}
+                        <span className="cr-hint">Requested {new Date(req.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                      </div>
+                      <div className="cr-task-actions" style={{ alignItems: 'center' }}>
+                        <span style={{ fontSize: '.85rem', color: '#555' }}>
+                          Assigned: <strong>{req.ambassador?.full_name || 'Unassigned'}</strong>
+                        </span>
+                        <select value={req.assigned_to || ''}
+                          disabled={reassigningId === req.id}
+                          onChange={e => reassignToteRequest(req.id, e.target.value)}
+                          className="cr-reassign-select">
+                          <option value="">— Reassign to… —</option>
+                          {ambassadors.filter(a => a.active).map(a => (
+                            <option key={a.id} value={a.id}>{a.full_name}</option>
+                          ))}
+                        </select>
+                        {reassigningId === req.id && <span className="cr-spinner sm"></span>}
+                        {req.status === 'pending' && (
+                          <button className="cr-btn-primary sm"
+                            onClick={() => updateToteRequestStatus(req.id, 'tote_out')}>
+                            ✓ Mark Tote Delivered
+                          </button>
+                        )}
+                        {req.status === 'tote_out' && (
+                          <button className="cr-btn-secondary sm"
+                            onClick={() => updateToteRequestStatus(req.id, 'tote_picked_up')}>
+                            ✓ Mark Tote Picked Up
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </main>
+      )}
+
+      {/* end admin interface */}
+      </>}
 
       {/* ═══ FOOTER ═══ */}
       <footer className="cr-footer">

@@ -24,7 +24,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const ADMIN_EMAIL = "annaanstey@icloud.com";
+const ADMIN_EMAIL = "info@campusreclaimed.com";
 const FROM_EMAIL  = "noreply@campusreclaimed.com"; // must match verified domain in Resend
 
 const MAX_PDF_BYTES = 5_000_000;          // signed agreements are well under this
@@ -287,15 +287,7 @@ serve(async (req) => {
       console.warn("Donor link failed (non-fatal):", linkErr);
     }
 
-    // ── Send emails (non-fatal if email service not configured) ──
-    try {
-      await Promise.all([
-        sendAdminNotification(form, pdfUrl),
-        sendSubmitterConfirmation(form, pdfUrl),
-      ]);
-    } catch (emailErr) {
-      console.warn("Email send failed (non-fatal):", emailErr);
-    }
+    // Emails disabled — agreement saved to DB and storage only.
 
     return jsonResponse({
       success:      true,
