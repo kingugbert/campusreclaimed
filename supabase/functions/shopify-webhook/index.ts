@@ -1,7 +1,9 @@
 // supabase/functions/shopify-webhook/index.ts
 // Receives Shopify webhooks (orders/paid, orders/create, orders/cancelled,
 // products/delete) and updates item status in Supabase.
-// Now captures buyer_name and shopify_payout on sale.
+// Captures buyer_name and shopify_payout on sale.
+// Stage 4: also calculates and stores ambassador_commission on sale.
+// Stage 5: emails consignor when their consignment item sells.
 //
 // Deploy: supabase functions deploy shopify-webhook --no-verify-jwt
 
@@ -19,6 +21,29 @@ function verifyHmac(rawBody: string, hmacHeader: string, secret: string): boolea
   return timingSafeEqual(computed, received);
 }
 
+async function sendEmail(resendKey: string, to: string, subject: string, html: string) {
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: "Campus Reclaimed <info@campusreclaimed.com>", to, subject, html }),
+  });
+  if (!res.ok) console.error(`Email to ${to} failed:`, await res.text());
+  return res.ok;
+}
+
+function emailWrap(body: string): string {
+  return `<div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #faf7f2;">
+    <div style="background: #1a3c34; color: #fff; padding: 20px 24px; border-radius: 12px 12px 0 0;">
+      <h1 style="margin:0; font-size: 22px; font-weight: 400;">Campus <em>Reclaimed</em></h1>
+    </div>
+    <div style="background: #fff; padding: 28px 24px; border-radius: 0 0 12px 12px; border: 1px solid #e4e0da; line-height: 1.6; color: #1a1a1a;">
+      ${body}
+    </div>
+  </div>`;
+}
+
+const DONOR_PORTAL_URL = "https://92mauwn4py.us-east-1.awsapprunner.com/donor";
+
 serve(async (req) => {
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
@@ -27,6 +52,7 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const shopifyWebhookSecret = Deno.env.get("SHOPIFY_WEBHOOK_SECRET");
+  const resendKey = Deno.env.get("RESEND_API_KEY");
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   // ── Fail closed: no secret configured means no webhook processing ──
@@ -74,10 +100,7 @@ serve(async (req) => {
         payload.email ||
         null;
 
-      // ── Extract gross payout (what the buyer paid, before any Shopify fees) ──
-      const shopifyPayout = payload.total_price ? parseFloat(payload.total_price) : null;
-
-      console.log(`Order ${orderId} | Buyer: ${buyerName} | Total: $${shopifyPayout}`);
+      console.log(`Order ${orderId} | Buyer: ${buyerName} | Total: $${payload.total_price}`);
 
       let processedCount = 0;
 
@@ -86,7 +109,12 @@ serve(async (req) => {
         const variantId = lineItem.variant_id?.toString();
         if (!productId && !variantId) continue;
 
-        let query = supabase.from("donation_items").select("id, status");
+        // ── Use only the line item price (excludes shipping) ──
+        const shopifyPayout = lineItem.price ? parseFloat(lineItem.price) : null;
+
+        let query = supabase
+          .from("donation_items")
+          .select("id, status, uploaded_by, payout_percentage, agreement_type, item_description, donation_id");
         if (variantId) query = query.eq("shopify_variant_id", variantId);
         else query = query.eq("shopify_product_id", productId);
 
@@ -102,14 +130,44 @@ serve(async (req) => {
         }
 
         for (const match of matchingItems) {
+          // ── Stage 4: Look up ambassador commission rate ──
+          let ambassadorId: string | null = null;
+          let ambassadorCommission: number | null = null;
+
+          if (match.uploaded_by && match.agreement_type === 'consignment' && shopifyPayout !== null) {
+            const { data: ambProfile } = await supabase
+              .from("ambassador_profiles")
+              .select("id, commission_rate")
+              .eq("id", match.uploaded_by)
+              .maybeSingle();
+
+            if (ambProfile) {
+              ambassadorId = ambProfile.id;
+              const payoutPct    = match.payout_percentage ?? 20;
+              const commissionPct = ambProfile.commission_rate ?? 10;
+              // Commission = what the consignor earns × ambassador's commission rate
+              // consignor_payout = shopify_payout * payout_percentage / 100
+              // ambassador_commission = consignor_payout * commission_rate / 100
+              ambassadorCommission = parseFloat(
+                (shopifyPayout * (payoutPct / 100) * (commissionPct / 100)).toFixed(2)
+              );
+              console.log(
+                `Ambassador ${ambassadorId} commission: $${ambassadorCommission} ` +
+                `(${payoutPct}% consignor × ${commissionPct}% commission rate)`
+              );
+            }
+          }
+
           const { error: updateError } = await supabase
             .from("donation_items")
             .update({
-              status:           "sold",
-              sold_at:          new Date().toISOString(),
-              shopify_order_id: orderId,
-              buyer_name:       buyerName,
-              shopify_payout:   shopifyPayout,
+              status:                "sold",
+              sold_at:               new Date().toISOString(),
+              shopify_order_id:      orderId,
+              buyer_name:            buyerName,
+              shopify_payout:        shopifyPayout,
+              ambassador_id:         ambassadorId,
+              ambassador_commission: ambassadorCommission,
             })
             .eq("id", match.id);
 
@@ -117,7 +175,63 @@ serve(async (req) => {
             throw new Error(`Update failed for item ${match.id}: ${updateError.message}`);
           }
           processedCount++;
-          console.log(`Marked item ${match.id} as sold | buyer: ${buyerName} | payout: $${shopifyPayout}`);
+          console.log(`Marked item ${match.id} as sold | buyer: ${buyerName} | payout: $${shopifyPayout} | amb commission: $${ambassadorCommission}`);
+
+          // ── Stage 5: Email consignor when their item sells ──
+          if (match.agreement_type === 'consignment' && resendKey && shopifyPayout !== null) {
+            try {
+              // Look up the donor's email via donations → donors
+              const { data: donationRow } = await supabase
+                .from("donations")
+                .select("donor_id")
+                .eq("id", match.donation_id)
+                .maybeSingle();
+
+              if (donationRow?.donor_id) {
+                const { data: donorRow } = await supabase
+                  .from("donors")
+                  .select("donor_name, donor_email")
+                  .eq("id", donationRow.donor_id)
+                  .maybeSingle();
+
+                if (donorRow?.donor_email) {
+                  const payoutPct = match.payout_percentage ?? 20;
+                  const consignorPayout = (shopifyPayout * payoutPct / 100).toFixed(2);
+                  const firstName = donorRow.donor_name?.split(' ')[0] || 'there';
+
+                  await sendEmail(
+                    resendKey,
+                    donorRow.donor_email,
+                    "Your Item Sold on Campus Reclaimed! 🎉",
+                    emailWrap(`
+                      <p>Hi ${firstName},</p>
+                      <p>Great news — your item <strong>${match.item_description || 'Item'}</strong> just sold on Campus Reclaimed!</p>
+                      <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin: 16px 0; background: #f9fafb; border-radius: 8px; overflow: hidden;">
+                        <tr>
+                          <td style="padding: 10px 16px; color: #6b7280; width: 50%;">Your Payout</td>
+                          <td style="padding: 10px 16px; font-weight: 700; color: #16a34a;">$${consignorPayout}</td>
+                        </tr>
+                      </table>
+                      <p>When you're ready to collect your payout, visit your Consignor Portal:</p>
+                      <p>
+                        <a href="${DONOR_PORTAL_URL}"
+                           style="display: inline-block; background: #1a3c34; color: #fff; text-decoration: none;
+                                  padding: 12px 24px; border-radius: 8px; font-size: 15px; font-weight: 500;">
+                          Request Your Payout →
+                        </a>
+                      </p>
+                      <p>Thank you for choosing Campus Reclaimed. Your items are making a difference!</p>
+                      <p>Best,<br>The Campus Reclaimed Team</p>
+                    `)
+                  );
+                  console.log(`Sold notification sent to consignor ${donorRow.donor_email} for item ${match.id}`);
+                }
+              }
+            } catch (emailErr) {
+              // Don't fail the webhook if the email fails
+              console.error(`Failed to send consignor sold notification for item ${match.id}:`, emailErr);
+            }
+          }
         }
       }
 
@@ -140,11 +254,13 @@ serve(async (req) => {
       const { data: revertedItems, error } = await supabase
         .from("donation_items")
         .update({
-          status:           "listed",
-          sold_at:          null,
-          shopify_order_id: null,
-          buyer_name:       null,
-          shopify_payout:   null,
+          status:                "listed",
+          sold_at:               null,
+          shopify_order_id:      null,
+          buyer_name:            null,
+          shopify_payout:        null,
+          ambassador_commission: null,
+          ambassador_id:         null,
         })
         .eq("shopify_order_id", orderId)
         .eq("status", "sold")

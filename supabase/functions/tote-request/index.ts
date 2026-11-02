@@ -7,6 +7,9 @@
 //   send_pickup_schedule     → Email 3: pickup day/time window (ambassador enters)
 //   send_pickup_confirmation → Email 5 (donation) or 6 (consignment): tote was picked up
 //
+// Stage 5: Student confirmation email (Email 1) now includes a "Book your pickup time →"
+//          button linking to the assigned ambassador's Cal.com URL (if set).
+//
 // Deploy: supabase functions deploy tote-request --no-verify-jwt --project-ref vkfzeojkxfuehgtwysrn
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -211,12 +214,13 @@ serve(async (req) => {
     // ── Assign to least-loaded active ambassador ──────────────
     const { data: allAmbs } = await supabase
       .from("ambassador_profiles")
-      .select("id, full_name, email")
+      .select("id, full_name, email, calcom_url")
       .eq("active", true);
 
-    let assignedTo: string | null = null;
-    let ambName  = "an ambassador";
-    let ambEmail: string | null = null;
+    let assignedTo:  string | null = null;
+    let ambName    = "an ambassador";
+    let ambEmail:  string | null = null;
+    let ambCalcomUrl: string | null = null;
 
     if (allAmbs && allAmbs.length > 0) {
       const { data: openRequests } = await supabase
@@ -235,9 +239,10 @@ serve(async (req) => {
         (loadMap[amb.id] ?? 0) < (loadMap[best.id] ?? 0) ? amb : best
       );
 
-      assignedTo = leastLoaded.id;
-      ambName    = leastLoaded.full_name;
-      ambEmail   = leastLoaded.email || null;
+      assignedTo    = leastLoaded.id;
+      ambName       = leastLoaded.full_name;
+      ambEmail      = leastLoaded.email || null;
+      ambCalcomUrl  = leastLoaded.calcom_url || null;
     }
 
     // ── Create tote request ───────────────────────────────────
@@ -265,12 +270,27 @@ serve(async (req) => {
     if (resendKey) {
       const firstName = name.split(' ')[0];
 
-      // Email 1: Student confirmation — exact wording per 9/16 meeting notes
+      // Build optional Cal.com booking button for Email 1
+      const calcomButton = ambCalcomUrl
+        ? `<p style="margin-top: 20px;">
+            <a href="${ambCalcomUrl}"
+               style="display: inline-block; background: #1a3c34; color: #fff; text-decoration: none;
+                      padding: 12px 24px; border-radius: 8px; font-size: 15px; font-weight: 500;">
+              Book your pickup time →
+            </a>
+          </p>
+          <p style="font-size: 13px; color: #888; margin-top: 8px;">
+            Use this link to schedule a convenient time for our ambassador to pick up your tote.
+          </p>`
+        : '';
+
+      // Email 1: Student confirmation — exact wording per 9/16 meeting notes + Cal.com button
       await sendEmail(resendKey, email.trim(), "Campus Reclaimed – Reclaim Tote Request",
         emailWrap(`
           <p>Hi ${firstName},</p>
           <p>Thank you for your support of Campus Reclaimed and requesting a Reclaim Tote.</p>
           <p>Your Reclaim Tote will be delivered in the next 24-48 hours to the address you provided. Please fill out our agreement: <a href="${AGREEMENT_URL}" style="color: #1a3c34;">${AGREEMENT_URL}</a>. These instructions indicate whether you are selling items on consignment or donating them. You will receive another email approximately 24-48 hours after the bag was delivered, explaining the time frame it should be filled and placed outside your door.</p>
+          ${calcomButton}
           <p>Thank you again for choosing Campus Reclaimed. It means more when it is reclaimed!</p>
           <p>Best,<br>The Campus Reclaimed Team</p>
         `)

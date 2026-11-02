@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import './App.css';
 import AgreementPage from './pages/AgreementPage';
 import ToteRequestPage from './pages/ToteRequestPage';
+import DonorPortalPage from './pages/DonorPortalPage';
 
 /* ─── helpers ─── */
 const formatPhone = (value) => {
@@ -298,13 +299,15 @@ function App() {
   const [newToteForm, setNewToteForm]             = useState({ donorId: '', pickupDate: new Date().toISOString().split('T')[0] });
   const [creatingTote, setCreatingTote]           = useState(false);
   const [addingToTote, setAddingToTote]           = useState(null);
-  const [toteItemForm, setToteItemForm]           = useState({ itemDescription: '', metadata: {} });
+  const [toteItemForm, setToteItemForm]           = useState({ itemDescription: '', category: 'Clothing', metadata: {} });
   const [toteItemFiles, setToteItemFiles]         = useState([]);
   const [toteItemPreviews, setToteItemPreviews]   = useState([]);
   const [toteAiStatus, setToteAiStatus]           = useState('idle');
   const [savingToteItem, setSavingToteItem]       = useState(false);
   const [myItems, setMyItems]                     = useState([]);
   const [myItemsLoading, setMyItemsLoading]       = useState(false);
+  const [myCommissions, setMyCommissions]         = useState([]);
+  const [myCommissionsLoading, setMyCommissionsLoading] = useState(false);
 
   /* ── tote requests state (ambassador tasks + admin view) ── */
   const [toteRequests, setToteRequests]           = useState([]);
@@ -540,9 +543,10 @@ function App() {
     }
   }, [userRole, session]);
 
-  /* ── ambassador portal: fetch my items when tab switches ── */
+  /* ── ambassador portal: fetch my items / commissions when tab switches ── */
   useEffect(() => {
     if (userRole === 'ambassador' && ambTab === 'my-items') fetchMyItems();
+    if (userRole === 'ambassador' && ambTab === 'commissions') fetchMyCommissions();
   }, [userRole, ambTab]);
 
   /* ── tote requests: fetch when tasks tab opens ── */
@@ -680,6 +684,22 @@ function App() {
     finally { setMyItemsLoading(false); }
   };
 
+  const fetchMyCommissions = async () => {
+    if (!supabase || !session) return;
+    setMyCommissionsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('donation_items')
+        .select('id, sku, item_description, shopify_payout, ambassador_commission, ambassador_commission_paid, ambassador_commission_paid_date, sold_at, status')
+        .eq('uploaded_by', session.user.id)
+        .not('ambassador_commission', 'is', null)
+        .order('sold_at', { ascending: false });
+      if (error) throw error;
+      setMyCommissions(data || []);
+    } catch (err) { console.error('Fetch my commissions error:', err); }
+    finally { setMyCommissionsLoading(false); }
+  };
+
   const createTote = async () => {
     if (!newToteForm.donorId || !newToteForm.pickupDate) return;
     setCreatingTote(true);
@@ -734,8 +754,9 @@ function App() {
     if (!toteItemForm.itemDescription.trim()) return;
     setSavingToteItem(true);
     try {
-      // Get next SKU via RPC
-      const { data: skuData, error: skuErr } = await supabase.rpc('generate_next_sku');
+      // Get next SKU via RPC — pass category so the right prefix is used
+      const itemCategory = toteItemForm.category || 'Clothing';
+      const { data: skuData, error: skuErr } = await supabase.rpc('generate_next_sku', { category: itemCategory });
       if (skuErr) throw skuErr;
       const sku = skuData;
 
@@ -783,7 +804,7 @@ function App() {
           tote_id: toteId,
           sku,
           item_description: toteItemForm.itemDescription.trim(),
-          category: 'Clothing',
+          category: toteItemForm.category || 'Clothing',
           metadata: toteItemForm.metadata,
           item_image_url: imageUrl,
           uploaded_by: session?.user?.id,
@@ -800,7 +821,7 @@ function App() {
       ));
 
       // Reset form
-      setToteItemForm({ itemDescription: '', metadata: {} });
+      setToteItemForm({ itemDescription: '', category: 'Clothing', metadata: {} });
       setToteItemFiles([]);
       setToteItemPreviews([]);
       setToteAiStatus('idle');
@@ -1372,6 +1393,9 @@ function App() {
   if (window.location.pathname === '/request-tote') {
     return <ToteRequestPage />;
   }
+  if (window.location.pathname === '/donor') {
+    return <DonorPortalPage />;
+  }
 
   /* ─── config warning ─── */
   if (!supabase) {
@@ -1437,7 +1461,7 @@ function App() {
         return (
           <div className="cr-amb-portal">
             {/* Ambassador sub-nav */}
-            <nav className="cr-nav three" role="tablist">
+            <nav className="cr-nav four" role="tablist">
               <button role="tab" className={`cr-nav-btn ${ambTab === 'totes' ? 'active' : ''}`}
                 onClick={() => setAmbTab('totes')}>
                 🧺 Tote Intake
@@ -1455,6 +1479,13 @@ function App() {
                 onClick={() => { setAmbTab('my-items'); fetchMyItems(); }}>
                 📦 My Items
                 {myItems.length > 0 && <span className="cr-count">{myItems.length}</span>}
+              </button>
+              <button role="tab" className={`cr-nav-btn ${ambTab === 'commissions' ? 'active' : ''}`}
+                onClick={() => { setAmbTab('commissions'); fetchMyCommissions(); }}>
+                💰 Commissions
+                {myCommissions.filter(c => !c.ambassador_commission_paid).length > 0 && (
+                  <span className="cr-count">{myCommissions.filter(c => !c.ambassador_commission_paid).length}</span>
+                )}
               </button>
             </nav>
 
@@ -1481,7 +1512,7 @@ function App() {
                             <div>
                               <strong>{req.student_name}</strong>
                               <span className={`cr-task-status-badge ${req.status}`}>
-                                {req.status === 'pending' ? '📦 Deliver Tote' : req.status === 'tote_out' ? '🔄 Pick Up Tote' : '✓ Picked Up'}
+                                {req.status === 'pending' ? '📦 Deliver Tote' : req.status === 'tote_out' ? '🔄 Pick Up Tote' : req.status === 'scheduled' ? '📅 Pickup Scheduled' : '✓ Picked Up'}
                               </span>
                             </div>
                             <span className={`cr-sla-badge sla-${sla}`}>
@@ -1646,7 +1677,7 @@ function App() {
                               {/* Add item form */}
                               {addingToTote === tote.id ? (
                                 <div className="cr-amb-add-item">
-                                  <h4>Add Clothing Item</h4>
+                                  <h4>Add Item</h4>
                                   <div className="cr-field-grid">
                                     <div className="cr-field cr-span-2">
                                       <label>
@@ -1670,6 +1701,15 @@ function App() {
                                           <input type="file" accept="image/*" capture="environment" className="cr-file-input" onChange={handleToteItemPhoto} />
                                         </label>
                                       )}
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Category <span className="cr-req">*</span></label>
+                                      <select value={toteItemForm.category || 'Clothing'}
+                                        onChange={e => setToteItemForm(p => ({ ...p, category: e.target.value, metadata: {} }))}>
+                                        {['Bedding', 'Books', 'Clothing', 'Electronics', 'Furniture', 'Kitchen', 'Other'].map(c => (
+                                          <option key={c}>{c}</option>
+                                        ))}
+                                      </select>
                                     </div>
                                     <div className="cr-field cr-span-2">
                                       <label>Description <span className="cr-req">*</span></label>
@@ -1721,14 +1761,14 @@ function App() {
                                       disabled={savingToteItem || !toteItemForm.itemDescription.trim()}>
                                       {savingToteItem ? <><span className="cr-spinner"></span> Saving…</> : 'Save Item + Assign SKU'}
                                     </button>
-                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setToteItemForm({ itemDescription: '', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); }}>
+                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setToteItemForm({ itemDescription: '', category: 'Clothing', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); }}>
                                       Cancel
                                     </button>
                                   </div>
                                 </div>
                               ) : (
                                 <button className="cr-add-item-btn" onClick={() => setAddingToTote(tote.id)}>
-                                  + Add Clothing Item
+                                  + Add Item
                                 </button>
                               )}
                             </div>
@@ -1771,6 +1811,70 @@ function App() {
                       </li>
                     ))}
                   </ul>
+                )}
+              </main>
+            )}
+
+            {/* ── MY COMMISSIONS TAB ── */}
+            {ambTab === 'commissions' && (
+              <main className="cr-main">
+                <h2 className="cr-section-title">My Commissions</h2>
+                <p className="cr-section-desc">Commission is earned on each consignment item you add when it sells.</p>
+                {myCommissionsLoading ? (
+                  <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading…</p></div>
+                ) : myCommissions.length === 0 ? (
+                  <div className="cr-empty"><h3>No commissions yet</h3><p>Commissions appear here when consignment items you added are sold.</p></div>
+                ) : (
+                  <>
+                    {/* Summary row */}
+                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+                      <div className="cr-stat-card">
+                        <span className="cr-stat-label">Total Earned</span>
+                        <span className="cr-stat-value">${myCommissions.reduce((s, c) => s + (c.ambassador_commission ?? 0), 0).toFixed(2)}</span>
+                      </div>
+                      <div className="cr-stat-card">
+                        <span className="cr-stat-label">Unpaid</span>
+                        <span className="cr-stat-value" style={{ color: '#b45309' }}>
+                          ${myCommissions.filter(c => !c.ambassador_commission_paid).reduce((s, c) => s + (c.ambassador_commission ?? 0), 0).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="cr-stat-card">
+                        <span className="cr-stat-label">Paid Out</span>
+                        <span className="cr-stat-value" style={{ color: '#16a34a' }}>
+                          ${myCommissions.filter(c => c.ambassador_commission_paid).reduce((s, c) => s + (c.ambassador_commission ?? 0), 0).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                    <ul className="cr-list">
+                      {myCommissions.map(item => (
+                        <li key={item.id} className="cr-card">
+                          <div className="cr-card-header" style={{ cursor: 'default' }}>
+                            <div className="cr-card-left">
+                              <div className="cr-card-info">
+                                <span className="cr-sku-badge">{item.sku || '—'}</span>
+                                <strong style={{ marginTop: 4 }}>{item.item_description}</strong>
+                                <span className="cr-card-donor">
+                                  Sold {item.sold_at ? new Date(item.sold_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                                  {item.shopify_payout != null && ` · Sale $${parseFloat(item.shopify_payout).toFixed(2)}`}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="cr-card-right" style={{ flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                              <span style={{ fontWeight: 700, fontSize: '1rem', color: item.ambassador_commission_paid ? '#16a34a' : '#b45309' }}>
+                                ${(item.ambassador_commission ?? 0).toFixed(2)}
+                              </span>
+                              <span className={`cr-tag ${item.ambassador_commission_paid ? 'active' : 'pending'}`}>
+                                {item.ambassador_commission_paid ? '✓ Paid' : 'Unpaid'}
+                              </span>
+                              {item.ambassador_commission_paid_date && (
+                                <span className="cr-hint">{new Date(item.ambassador_commission_paid_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                              )}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
                 )}
               </main>
             )}
@@ -3654,13 +3758,47 @@ function App() {
             ) : (
               <table className="cr-agreements-table">
                 <thead>
-                  <tr><th>Name</th><th>Email</th><th>Created</th><th>Actions</th></tr>
+                  <tr><th>Name</th><th>Email</th><th>Commission %</th><th>Cal.com URL</th><th>Created</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                   {ambassadors.filter(a => a.active).map(a => (
                     <tr key={a.id}>
                       <td><strong>{a.full_name}</strong></td>
                       <td>{a.email}</td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <input
+                            type="number" min="0" max="100" step="0.5"
+                            style={{ width: 64, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: '.875rem' }}
+                            defaultValue={a.commission_rate ?? 10}
+                            onBlur={async e => {
+                              const rate = parseFloat(e.target.value);
+                              if (isNaN(rate)) return;
+                              const { error } = await supabase
+                                .from('ambassador_profiles')
+                                .update({ commission_rate: rate })
+                                .eq('id', a.id);
+                              if (!error) {
+                                setAmbassadors(prev => prev.map(x => x.id === a.id ? { ...x, commission_rate: rate } : x));
+                              }
+                            }}
+                          />
+                          <span style={{ fontSize: '.8rem', color: '#6b7280' }}>%</span>
+                        </div>
+                      </td>
+                      <td>
+                        <input
+                          type="url"
+                          placeholder="https://cal.com/…"
+                          defaultValue={a.calcom_url || ''}
+                          style={{ width: 200, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: '.8rem' }}
+                          onBlur={async e => {
+                            const url = e.target.value.trim() || null;
+                            await supabase.from('ambassador_profiles').update({ calcom_url: url }).eq('id', a.id);
+                            setAmbassadors(prev => prev.map(x => x.id === a.id ? { ...x, calcom_url: url } : x));
+                          }}
+                        />
+                      </td>
                       <td className="cr-agreements-date">{a.created_at ? new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
                       <td>
                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -3710,7 +3848,7 @@ function App() {
                           <strong>{req.student_name}</strong>
                           <span style={{ fontSize: '.8rem', color: '#888', marginLeft: 8 }}>{req.student_email}</span>
                           <span className={`cr-task-status-badge ${req.status}`}>
-                            {req.status === 'pending' ? 'Pending Delivery' : req.status === 'tote_out' ? 'Tote Out' : 'Picked Up'}
+                            {req.status === 'pending' ? 'Pending Delivery' : req.status === 'tote_out' ? 'Tote Out' : req.status === 'scheduled' ? '📅 Pickup Scheduled' : 'Picked Up'}
                           </span>
                         </div>
                         <span className={`cr-sla-badge sla-${sla}`}>
@@ -3721,6 +3859,7 @@ function App() {
                         <span>📍 {req.student_address}</span>
                         {req.student_phone && <span>📞 {req.student_phone}</span>}
                         {req.item_types && <span>👕 {req.item_types}</span>}
+                        {req.scheduled_at && <span>📅 Pickup: {new Date(req.scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })} ET</span>}
                         <span className="cr-hint">Requested {new Date(req.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
                       </div>
                       <div className="cr-task-actions" style={{ alignItems: 'center' }}>
@@ -3756,6 +3895,15 @@ function App() {
               </div>
             )}
           </div>
+
+          {/* ── Ambassador Commissions ── */}
+          <div className="cr-users-list" style={{ marginTop: '1.5rem' }}>
+            <div className="cr-users-list-header">
+              <h3>Ambassador Commissions</h3>
+              <span className="cr-hint" style={{ fontSize: '.8rem' }}>Unpaid commissions across all ambassadors</span>
+            </div>
+            <AmbassadorCommissions tab={tab} supabase={supabase} />
+          </div>
         </main>
       )}
 
@@ -3767,6 +3915,85 @@ function App() {
         <p>Campus Reclaimed &middot; Reduce, Reuse, Reclaim</p>
       </footer>
     </div>
+  );
+}
+
+function AmbassadorCommissions({ tab, supabase }) {
+  const [ambCommData, setAmbCommData] = React.useState(null);
+  const [ambCommLoading, setAmbCommLoading] = React.useState(false);
+  const [markingPaid, setMarkingPaid] = React.useState(null);
+
+  React.useEffect(() => {
+    if (tab !== 'users') return;
+    setAmbCommLoading(true);
+    supabase
+      .from('donation_items')
+      .select('id, sku, item_description, ambassador_commission, ambassador_commission_paid, ambassador_commission_paid_date, sold_at, uploaded_by, ambassador:ambassador_profiles!ambassador_id(full_name, email)')
+      .not('ambassador_commission', 'is', null)
+      .order('sold_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (!error) setAmbCommData(data || []);
+        setAmbCommLoading(false);
+      });
+  }, [tab]);
+
+  if (ambCommLoading) return <div className="cr-loading"><span className="cr-spinner lg"></span></div>;
+  if (!ambCommData || ambCommData.length === 0) return <p className="cr-section-desc" style={{ marginTop: '.5rem' }}>No commission data yet. Commissions are calculated automatically when consignment items sell.</p>;
+
+  const unpaid = ambCommData.filter(i => !i.ambassador_commission_paid);
+  const totalUnpaid = unpaid.reduce((s, i) => s + (i.ambassador_commission ?? 0), 0);
+
+  const markPaid = async (itemId) => {
+    setMarkingPaid(itemId);
+    const { error } = await supabase
+      .from('donation_items')
+      .update({ ambassador_commission_paid: true, ambassador_commission_paid_date: new Date().toISOString().split('T')[0] })
+      .eq('id', itemId);
+    if (!error) setAmbCommData(prev => prev.map(i => i.id === itemId ? { ...i, ambassador_commission_paid: true, ambassador_commission_paid_date: new Date().toISOString().split('T')[0] } : i));
+    setMarkingPaid(null);
+  };
+
+  return (
+    <>
+      {totalUnpaid > 0 && (
+        <div style={{ padding: '10px 14px', background: '#fef3c7', borderRadius: 8, marginBottom: '1rem', fontSize: '.9rem', color: '#92400e' }}>
+          <strong>${totalUnpaid.toFixed(2)}</strong> total unpaid across {unpaid.length} item{unpaid.length !== 1 ? 's' : ''}
+        </div>
+      )}
+      <table className="cr-agreements-table">
+        <thead>
+          <tr><th>Ambassador</th><th>SKU</th><th>Item</th><th>Commission</th><th>Sold</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {ambCommData.map(item => (
+            <tr key={item.id} style={{ opacity: item.ambassador_commission_paid ? 0.6 : 1 }}>
+              <td>{item.ambassador?.full_name || '—'}</td>
+              <td><span className="cr-sku-badge" style={{ fontSize: '.75rem' }}>{item.sku || '—'}</span></td>
+              <td>{item.item_description}</td>
+              <td style={{ fontWeight: 600, color: item.ambassador_commission_paid ? '#16a34a' : '#b45309' }}>
+                ${(item.ambassador_commission ?? 0).toFixed(2)}
+              </td>
+              <td className="cr-agreements-date">
+                {item.sold_at ? new Date(item.sold_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+              </td>
+              <td>
+                {item.ambassador_commission_paid ? (
+                  <span className="cr-tag active" style={{ fontSize: '.75rem' }}>
+                    ✓ Paid {item.ambassador_commission_paid_date ? new Date(item.ambassador_commission_paid_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}
+                  </span>
+                ) : (
+                  <button className="cr-act edit" style={{ fontSize: '.75rem' }}
+                    onClick={() => markPaid(item.id)}
+                    disabled={markingPaid === item.id}>
+                    {markingPaid === item.id ? <span className="cr-spinner sm"></span> : 'Mark Paid'}
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
   );
 }
 
