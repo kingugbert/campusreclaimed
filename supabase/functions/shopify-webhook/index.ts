@@ -188,11 +188,12 @@ serve(async (req) => {
                 .maybeSingle();
 
               if (donationRow?.donor_id) {
-                const { data: donorRow } = await supabase
+                const { data: donorRows } = await supabase
                   .from("donors")
                   .select("donor_name, donor_email")
                   .eq("id", donationRow.donor_id)
-                  .maybeSingle();
+                  .limit(1);
+                const donorRow = donorRows?.[0] ?? null;
 
                 if (donorRow?.donor_email) {
                   const payoutPct = match.payout_percentage ?? 20;
