@@ -730,6 +730,7 @@ function App() {
       setToteItemForm(prev => ({
         ...prev,
         itemDescription: prev.itemDescription.trim() || data.description || prev.itemDescription,
+        category: data.category || prev.category,
         metadata: { ...prev.metadata, ...(data.metadata || {}) },
       }));
       setToteAiStatus('done');
@@ -789,9 +790,9 @@ function App() {
       if (toteItemFiles[0]) {
         const ext  = toteItemFiles[0].name.split('.').pop();
         const path = `${tote.donor_id}/${toteId}/${sku}.${ext}`;
-        const { error: upErr } = await supabase.storage.from('donation-images').upload(path, toteItemFiles[0]);
+        const { error: upErr } = await supabase.storage.from('inventory').upload(path, toteItemFiles[0]);
         if (!upErr) {
-          const { data: urlData } = supabase.storage.from('donation-images').getPublicUrl(path);
+          const { data: urlData } = supabase.storage.from('inventory').getPublicUrl(path);
           imageUrl = urlData.publicUrl;
         }
       }
@@ -805,6 +806,8 @@ function App() {
           sku,
           item_description: toteItemForm.itemDescription.trim(),
           category: toteItemForm.category || 'Clothing',
+          agreement_type: toteItemForm.agreementType || 'donation',
+          storage_location: 'Tote Intake',
           metadata: toteItemForm.metadata,
           item_image_url: imageUrl,
           uploaded_by: session?.user?.id,
@@ -821,7 +824,7 @@ function App() {
       ));
 
       // Reset form
-      setToteItemForm({ itemDescription: '', category: 'Clothing', metadata: {} });
+      setToteItemForm({ itemDescription: '', category: 'Clothing', agreementType: 'donation', metadata: {} });
       setToteItemFiles([]);
       setToteItemPreviews([]);
       setToteAiStatus('idle');
@@ -1512,7 +1515,7 @@ function App() {
                             <div>
                               <strong>{req.student_name}</strong>
                               <span className={`cr-task-status-badge ${req.status}`}>
-                                {req.status === 'pending' ? '📦 Deliver Tote' : req.status === 'tote_out' ? '🔄 Pick Up Tote' : req.status === 'scheduled' ? '📅 Pickup Scheduled' : '✓ Picked Up'}
+                                {req.status === 'pending' ? '📦 Deliver Tote' : req.status === 'tote_out' ? '🔄 Pick Up Tote' : req.status === 'scheduled' ? (req.tote_delivered_at ? '📅 Pickup Scheduled' : '📅 Drop-Off Scheduled') : '✓ Picked Up'}
                               </span>
                             </div>
                             <span className={`cr-sla-badge sla-${sla}`}>
@@ -1565,6 +1568,26 @@ function App() {
                                   onClick={() => updateToteRequestStatus(req.id, 'tote_picked_up')}>
                                   ✓ Mark Tote Picked Up
                                 </button>
+                              </div>
+                            )}
+                            {req.status === 'scheduled' && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                <div style={{ fontSize: 13, color: '#555', background: '#f0f8f4', padding: '6px 10px', borderRadius: 6 }}>
+                                  📅 {req.tote_delivered_at ? 'Pickup' : 'Drop-off'} confirmed: <strong>{req.scheduled_at
+                                    ? new Date(req.scheduled_at).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })
+                                    : 'Time TBD'}</strong>
+                                </div>
+                                {req.tote_delivered_at ? (
+                                  <button className="cr-btn-primary sm"
+                                    onClick={() => updateToteRequestStatus(req.id, 'tote_picked_up')}>
+                                    ✓ Mark Tote Picked Up
+                                  </button>
+                                ) : (
+                                  <button className="cr-btn-primary sm"
+                                    onClick={() => updateToteRequestStatus(req.id, 'tote_out')}>
+                                    ✓ Mark Tote Delivered
+                                  </button>
+                                )}
                               </div>
                             )}
                             {req.status === 'tote_picked_up' && (
@@ -1711,11 +1734,20 @@ function App() {
                                         ))}
                                       </select>
                                     </div>
+                                    <div className="cr-field">
+                                      <label>Agreement Type <span className="cr-req">*</span></label>
+                                      <select value={toteItemForm.agreementType || 'donation'}
+                                        onChange={e => setToteItemForm(p => ({ ...p, agreementType: e.target.value }))}>
+                                        <option value="donation">Donation</option>
+                                        <option value="consignment">Consignment</option>
+                                      </select>
+                                    </div>
                                     <div className="cr-field cr-span-2">
                                       <label>Description <span className="cr-req">*</span></label>
                                       <input type="text" placeholder="e.g. Red cotton t-shirt" value={toteItemForm.itemDescription}
                                         onChange={e => setToteItemForm(p => ({ ...p, itemDescription: e.target.value }))} />
                                     </div>
+                                    {toteItemForm.category === 'Clothing' && (<>
                                     <div className="cr-field">
                                       <label>Gender</label>
                                       <select value={toteItemForm.metadata.gender || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, gender: e.target.value } }))}>
@@ -1755,13 +1787,49 @@ function App() {
                                         <option value="No">No</option>
                                       </select>
                                     </div>
+                                    </>)}
+                                    {toteItemForm.category === 'Furniture' && (<>
+                                    <div className="cr-field">
+                                      <label>Type</label>
+                                      <select value={toteItemForm.metadata.subcategory || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, subcategory: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_SUBCATEGORIES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Color / Finish</label>
+                                      <input type="text" placeholder="e.g. Walnut Brown" value={toteItemForm.metadata.color || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Material</label>
+                                      <select value={toteItemForm.metadata.material || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, material: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_MATERIALS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Style</label>
+                                      <select value={toteItemForm.metadata.style || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, style: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_STYLES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Condition</label>
+                                      <select value={toteItemForm.metadata.condition || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, condition: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    </>)}
                                   </div>
                                   <div style={{ display: 'flex', gap: '.75rem', marginTop: '.85rem' }}>
                                     <button className="cr-btn-primary sm" onClick={() => saveToteItem(tote.id)}
                                       disabled={savingToteItem || !toteItemForm.itemDescription.trim()}>
                                       {savingToteItem ? <><span className="cr-spinner"></span> Saving…</> : 'Save Item + Assign SKU'}
                                     </button>
-                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setToteItemForm({ itemDescription: '', category: 'Clothing', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); }}>
+                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setToteItemForm({ itemDescription: '', category: 'Clothing', agreementType: 'donation', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); }}>
                                       Cancel
                                     </button>
                                   </div>
@@ -3848,7 +3916,7 @@ function App() {
                           <strong>{req.student_name}</strong>
                           <span style={{ fontSize: '.8rem', color: '#888', marginLeft: 8 }}>{req.student_email}</span>
                           <span className={`cr-task-status-badge ${req.status}`}>
-                            {req.status === 'pending' ? 'Pending Delivery' : req.status === 'tote_out' ? 'Tote Out' : req.status === 'scheduled' ? '📅 Pickup Scheduled' : 'Picked Up'}
+                            {req.status === 'pending' ? 'Pending Delivery' : req.status === 'tote_out' ? 'Tote Out' : req.status === 'scheduled' ? (req.tote_delivered_at ? '📅 Pickup Scheduled' : '📅 Drop-Off Scheduled') : 'Picked Up'}
                           </span>
                         </div>
                         <span className={`cr-sla-badge sla-${sla}`}>
@@ -3859,7 +3927,7 @@ function App() {
                         <span>📍 {req.student_address}</span>
                         {req.student_phone && <span>📞 {req.student_phone}</span>}
                         {req.item_types && <span>👕 {req.item_types}</span>}
-                        {req.scheduled_at && <span>📅 Pickup: {new Date(req.scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })} ET</span>}
+                        {req.scheduled_at && <span>📅 {req.tote_delivered_at ? 'Pickup' : 'Drop-off'}: {new Date(req.scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })} ET</span>}
                         <span className="cr-hint">Requested {new Date(req.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
                       </div>
                       <div className="cr-task-actions" style={{ alignItems: 'center' }}>
@@ -3880,6 +3948,18 @@ function App() {
                           <button className="cr-btn-primary sm"
                             onClick={() => updateToteRequestStatus(req.id, 'tote_out')}>
                             ✓ Mark Tote Delivered
+                          </button>
+                        )}
+                        {req.status === 'scheduled' && !req.tote_delivered_at && (
+                          <button className="cr-btn-primary sm"
+                            onClick={() => updateToteRequestStatus(req.id, 'tote_out')}>
+                            ✓ Mark Tote Delivered
+                          </button>
+                        )}
+                        {req.status === 'scheduled' && req.tote_delivered_at && (
+                          <button className="cr-btn-primary sm"
+                            onClick={() => updateToteRequestStatus(req.id, 'tote_picked_up')}>
+                            ✓ Mark Tote Picked Up
                           </button>
                         )}
                         {req.status === 'tote_out' && (
