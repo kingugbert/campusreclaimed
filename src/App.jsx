@@ -1749,10 +1749,24 @@ function App() {
                                     </div>
                                     {toteItemForm.category === 'Clothing' && (<>
                                     <div className="cr-field">
+                                      <label>Type</label>
+                                      <select value={toteItemForm.metadata.subcategory || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, subcategory: e.target.value } }))}>
+                                        <option value="">Select type…</option>
+                                        {CLOTHING_SUBCATEGORIES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
                                       <label>Gender</label>
                                       <select value={toteItemForm.metadata.gender || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, gender: e.target.value } }))}>
                                         <option value="">Select…</option>
                                         {CLOTHING_GENDERS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Age Group</label>
+                                      <select value={toteItemForm.metadata.age_group || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, age_group: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_AGE_GROUPS.map(v => <option key={v}>{v}</option>)}
                                       </select>
                                     </div>
                                     <div className="cr-field">
@@ -1763,21 +1777,33 @@ function App() {
                                       </select>
                                     </div>
                                     <div className="cr-field">
-                                      <label>Brand</label>
-                                      <input type="text" placeholder="e.g. Levi's" value={toteItemForm.metadata.brand || ''}
-                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, brand: e.target.value } }))} />
-                                    </div>
-                                    <div className="cr-field">
                                       <label>Color</label>
                                       <input type="text" placeholder="e.g. Navy Blue" value={toteItemForm.metadata.color || ''}
                                         onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
                                     </div>
                                     <div className="cr-field">
-                                      <label>Fabric</label>
+                                      <label>Brand</label>
+                                      <input type="text" placeholder="e.g. Levi's" value={toteItemForm.metadata.brand || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, brand: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Fabric / Material</label>
                                       <select value={toteItemForm.metadata.fabric || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, fabric: e.target.value } }))}>
                                         <option value="">Select…</option>
                                         {CLOTHING_FABRICS.map(v => <option key={v}>{v}</option>)}
                                       </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Condition</label>
+                                      <select value={toteItemForm.metadata.condition || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, condition: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Weight (lbs)</label>
+                                      <input type="number" step="0.1" min="0" placeholder="e.g. 1.5" value={toteItemForm.metadata.weight_lbs || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, weight_lbs: e.target.value } }))} />
                                     </div>
                                     <div className="cr-field">
                                       <label>New With Tags?</label>
@@ -1822,7 +1848,23 @@ function App() {
                                         {FURNITURE_CONDITIONS.map(v => <option key={v}>{v}</option>)}
                                       </select>
                                     </div>
-                                    </>)}
+                                    
+                                    <div className="cr-field">
+                                      <label>Dimensions <span className="cr-hint">(W × D × H)</span></label>
+                                      <input type="text" placeholder='e.g. 60" × 30" × 36"' value={toteItemForm.metadata.dimensions || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, dimensions: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Weight (lbs)</label>
+                                      <input type="number" step="1" min="0" placeholder="e.g. 45" value={toteItemForm.metadata.weight_lbs || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, weight_lbs: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Notes</label>
+                                      <input type="text" placeholder="assembly needed, pet home, smoke-free, missing hardware, etc." value={toteItemForm.metadata.notes || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, notes: e.target.value } }))} />
+                                    </div>
+</>)}
                                   </div>
                                   <div style={{ display: 'flex', gap: '.75rem', marginTop: '.85rem' }}>
                                     <button className="cr-btn-primary sm" onClick={() => saveToteItem(tote.id)}
