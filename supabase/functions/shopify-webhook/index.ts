@@ -143,17 +143,14 @@ serve(async (req) => {
 
             if (ambProfile) {
               ambassadorId = ambProfile.id;
-              const payoutPct    = match.payout_percentage ?? 20;
               const commissionPct = ambProfile.commission_rate ?? 10;
-              // Commission = what the consignor earns × ambassador's commission rate
-              // consignor_payout = shopify_payout * payout_percentage / 100
-              // ambassador_commission = consignor_payout * commission_rate / 100
+              // Commission = ambassador's rate × sale price (shopify_payout)
               ambassadorCommission = parseFloat(
-                (shopifyPayout * (payoutPct / 100) * (commissionPct / 100)).toFixed(2)
+                (shopifyPayout * (commissionPct / 100)).toFixed(2)
               );
               console.log(
                 `Ambassador ${ambassadorId} commission: $${ambassadorCommission} ` +
-                `(${payoutPct}% consignor × ${commissionPct}% commission rate)`
+                `(${commissionPct}% of $${shopifyPayout} sale price)`
               );
             }
           }
