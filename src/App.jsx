@@ -569,6 +569,11 @@ function App() {
         .eq('id', itemId);
       if (error) throw error;
       setPayouts(prev => prev.map(p => p.id === itemId ? { ...p, ...updates } : p));
+      // Email 6: notify consignor when payout is marked paid
+      if (updates.payout_paid === true) {
+        supabase.functions.invoke('notify-payout-sent', { body: { itemId } })
+          .catch(err => console.error('Payout notification email failed:', err));
+      }
     } catch (err) { console.error('Save payout error:', err); }
     finally { setSavingPayout(null); }
   };
