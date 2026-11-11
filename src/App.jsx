@@ -4055,7 +4055,7 @@ function AmbassadorCommissions({ tab, supabase }) {
     setAmbCommLoading(true);
     supabase
       .from('donation_items')
-      .select('id, sku, item_description, ambassador_commission, ambassador_commission_paid, ambassador_commission_paid_date, sold_at, uploaded_by, ambassador:ambassador_profiles!ambassador_id(full_name, email)')
+      .select('id, sku, item_description, agreement_type, ambassador_commission, ambassador_commission_paid, ambassador_commission_paid_date, sold_at, uploaded_by, ambassador:ambassador_profiles!ambassador_id(full_name, email), donation:donations(tote_number, donor:donors(donor_name))')
       .not('ambassador_commission', 'is', null)
       .order('sold_at', { ascending: false })
       .then(({ data, error }) => {
@@ -4089,7 +4089,7 @@ function AmbassadorCommissions({ tab, supabase }) {
       )}
       <table className="cr-agreements-table">
         <thead>
-          <tr><th>Ambassador</th><th>SKU</th><th>Item</th><th>Commission</th><th>Sold</th><th>Status</th></tr>
+          <tr><th>Ambassador</th><th>SKU</th><th>Item</th><th>Tote</th><th>Commission</th><th>Sold</th><th>Status</th></tr>
         </thead>
         <tbody>
           {ambCommData.map(item => (
@@ -4097,6 +4097,15 @@ function AmbassadorCommissions({ tab, supabase }) {
               <td>{item.ambassador?.full_name || '—'}</td>
               <td><span className="cr-sku-badge" style={{ fontSize: '.75rem' }}>{item.sku || '—'}</span></td>
               <td>{item.item_description}</td>
+              <td style={{ fontSize: '.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                {item.donation?.tote_number ? (
+                  <span>
+                    <strong style={{ color: '#374151' }}>#{item.donation.tote_number}</strong>
+                    {' · '}{item.agreement_type || '—'}
+                    {item.donation.donor?.donor_name ? ` · from ${item.donation.donor.donor_name.split(' ')[0]}` : ''}
+                  </span>
+                ) : '—'}
+              </td>
               <td style={{ fontWeight: 600, color: item.ambassador_commission_paid ? '#16a34a' : '#b45309' }}>
                 ${(item.ambassador_commission ?? 0).toFixed(2)}
               </td>
