@@ -255,7 +255,8 @@ function App() {
   const [editItemForm, setEditItemForm] = useState({ ...EMPTY_ITEM });
 
   /* ── shopify publish ── */
-  const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'in_storage' | 'listed' | 'sold'
+  const [statusFilter, setStatusFilter]   = useState('all'); // 'all' | 'in_storage' | 'listed' | 'sold'
+  const [categoryFilter, setCategoryFilter] = useState('all'); // 'all' | 'clothing' | 'other'
   const [publishingItem, setPublishingItem] = useState(null);
   const [publishForm, setPublishForm] = useState({ price: '', title: '' });
   const [publishLoading, setPublishLoading] = useState(false);
@@ -303,6 +304,8 @@ function App() {
   const [toteItemFiles, setToteItemFiles]         = useState([]);
   const [toteItemPreviews, setToteItemPreviews]   = useState([]);
   const [toteAiStatus, setToteAiStatus]           = useState('idle');
+  const [bgRemovingTote, setBgRemovingTote]       = useState(false);
+  const [bgRemoving, setBgRemoving]               = useState({});  // { itemKey: bool }
   const [savingToteItem, setSavingToteItem]       = useState(false);
   const [myItems, setMyItems]                     = useState([]);
   const [myItemsLoading, setMyItemsLoading]       = useState(false);
@@ -357,7 +360,7 @@ function App() {
     try {
       const { data, error } = await supabase
         .from('donation_items')
-        .select(`*, item_images(id, image_url, display_order), donation:donations!inner(id, date_accepted, notes, donor:donors!inner(id, donor_name, donor_email, address, phone_number, participation_status))`)
+        .select(`*, item_images(id, image_url, display_order), donation:donations!inner(id, date_accepted, notes, tote_number, donor:donors!inner(id, donor_name, donor_email, address, phone_number, participation_status))`)
         .order('created_at', { ascending: false });
       if (error) throw error;
       setRawItems(data || []);
@@ -373,6 +376,14 @@ function App() {
 
     if (statusFilter !== 'all') {
       filtered = filtered.filter(item => (item.status || 'in_storage') === statusFilter);
+    }
+
+    if (categoryFilter !== 'all') {
+      filtered = filtered.filter(item =>
+        categoryFilter === 'clothing'
+          ? item.category === 'Clothing'
+          : item.category !== 'Clothing'
+      );
     }
 
     if (searchQuery.trim()) {
@@ -406,7 +417,7 @@ function App() {
       });
     }
     return sorted;
-  }, [rawItems, searchQuery, statusFilter, sortField, sortDir]);
+  }, [rawItems, searchQuery, statusFilter, categoryFilter, sortField, sortDir]);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -666,10 +677,17 @@ function App() {
       const { data, error } = await supabase
         .from('totes')
         .select(`*, donor:donors(id, donor_name, donor_email, phone_number),
-                 items:donation_items(id, sku, item_description, metadata, status)`)
+                 items:donation_items(id, sku, item_description, metadata, status, item_images(id, image_url, display_order))`)
         .order('created_at', { ascending: false });
       if (error) throw error;
-      setTotes(data || []);
+      // Sort: active totes (status not 'completed') float to top, then by created_at desc
+      const sorted = (data || []).slice().sort((a, b) => {
+        const aActive = a.status !== 'completed' ? 0 : 1;
+        const bActive = b.status !== 'completed' ? 0 : 1;
+        if (aActive !== bActive) return aActive - bActive;
+        return new Date(b.created_at) - new Date(a.created_at);
+      });
+      setTotes(sorted);
     } catch (err) { console.error('Fetch totes error:', err); }
     finally { setTotesLoading(false); }
   };
@@ -758,6 +776,7 @@ function App() {
 
   const saveToteItem = async (toteId) => {
     if (!toteItemForm.itemDescription.trim()) return;
+    if (!toteItemForm.agreementType) return;
     setSavingToteItem(true);
     try {
       // Get next SKU via RPC — pass category so the right prefix is used
@@ -829,7 +848,7 @@ function App() {
       ));
 
       // Reset form
-      setToteItemForm({ itemDescription: '', category: 'Clothing', agreementType: 'donation', metadata: {} });
+      setToteItemForm({ itemDescription: '', category: 'Clothing', agreementType: '', metadata: {} });
       setToteItemFiles([]);
       setToteItemPreviews([]);
       setToteAiStatus('idle');
@@ -1001,6 +1020,30 @@ function App() {
   /* ════════════════════════════════════════════════
      AI IMAGE ANALYSIS
      ════════════════════════════════════════════════ */
+  // ── Background removal (imgly, runs in-browser, no API key) ──────────────
+  const removeBackgroundToWhite = async (file) => {
+    const { removeBackground } = await import('@imgly/background-removal');
+    const transparentBlob = await removeBackground(file);
+
+    // Composite the transparent PNG onto a white canvas
+    const img = new Image();
+    const tempUrl = URL.createObjectURL(transparentBlob);
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = tempUrl; });
+    URL.revokeObjectURL(tempUrl);
+
+    const canvas = document.createElement('canvas');
+    canvas.width  = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+
+    return new Promise((resolve) => {
+      canvas.toBlob(blob => resolve(new File([blob], 'bg-removed.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.92);
+    });
+  };
+
   const analyzeItemImage = async (itemKey, dataUrl) => {
     setAiStatus(prev => ({ ...prev, [itemKey]: 'analyzing' }));
     try {
@@ -1693,6 +1736,15 @@ function App() {
                                 <div className="cr-tote-items">
                                   {tote.items.map(item => (
                                     <div key={item.id} className="cr-tote-item-row">
+                                      {(() => {
+                                        const imgs = (item.item_images || []).slice().sort((a, b) => a.display_order - b.display_order);
+                                        const thumb = imgs.length > 0 ? imgs[0].image_url : null;
+                                        return thumb ? (
+                                          <img src={thumb} alt="" className="cr-tote-item-thumb" loading="lazy" />
+                                        ) : (
+                                          <div className="cr-tote-item-thumb placeholder" />
+                                        );
+                                      })()}
                                       <span className="cr-sku-badge">{item.sku}</span>
                                       <span className="cr-tote-item-desc">{item.item_description}</span>
                                       {item.metadata?.gender && <span className="cr-tag sm">{item.metadata.gender}</span>}
@@ -1715,10 +1767,30 @@ function App() {
                                         {toteAiStatus === 'error' && <span className="cr-ai-badge error">AI unavailable</span>}
                                       </label>
                                       {toteItemPreviews.length > 0 ? (
-                                        <div className="cr-upload-thumb" style={{ width: 100, height: 80 }}>
-                                          <img src={toteItemPreviews[0]} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
-                                          <button type="button" className="cr-upload-remove"
-                                            onClick={() => { setToteItemFiles([]); setToteItemPreviews([]); setToteAiStatus('idle'); }}>&times;</button>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                                          <div className="cr-upload-thumb" style={{ width: 100, height: 80 }}>
+                                            <img src={toteItemPreviews[0]} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
+                                            <button type="button" className="cr-upload-remove"
+                                              onClick={() => { setToteItemFiles([]); setToteItemPreviews([]); setToteAiStatus('idle'); setBgRemovingTote(false); }}>&times;</button>
+                                          </div>
+                                          <button type="button"
+                                            disabled={bgRemovingTote}
+                                            style={{ fontSize: 12, padding: '4px 10px', background: bgRemovingTote ? '#e5e7eb' : '#f0fdf4', color: bgRemovingTote ? '#9ca3af' : '#166534', border: '1px solid #bbf7d0', borderRadius: 6, cursor: bgRemovingTote ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                                            onClick={async () => {
+                                              if (!toteItemFiles[0]) return;
+                                              setBgRemovingTote(true);
+                                              try {
+                                                const processed = await removeBackgroundToWhite(toteItemFiles[0]);
+                                                const reader = new FileReader();
+                                                reader.onloadend = () => { setToteItemPreviews([String(reader.result)]); };
+                                                reader.readAsDataURL(processed);
+                                                setToteItemFiles([processed]);
+                                              } catch (err) {
+                                                console.error('Background removal failed:', err);
+                                              } finally { setBgRemovingTote(false); }
+                                            }}>
+                                            {bgRemovingTote ? <><span className="cr-spinner sm"></span> Removing…</> : '✂ White Background'}
+                                          </button>
                                         </div>
                                       ) : (
                                         <label className="cr-file-label">
@@ -1739,13 +1811,20 @@ function App() {
                                         ))}
                                       </select>
                                     </div>
-                                    <div className="cr-field">
+                                    <div className="cr-field cr-span-2">
                                       <label>Agreement Type <span className="cr-req">*</span></label>
-                                      <select value={toteItemForm.agreementType || 'donation'}
-                                        onChange={e => setToteItemForm(p => ({ ...p, agreementType: e.target.value }))}>
-                                        <option value="donation">Donation</option>
-                                        <option value="consignment">Consignment</option>
-                                      </select>
+                                      <div className="cr-agreement-toggle">
+                                        <button type="button"
+                                          className={`cr-agreement-btn donation ${toteItemForm.agreementType === 'donation' ? 'active' : ''}`}
+                                          onClick={() => setToteItemForm(p => ({ ...p, agreementType: p.agreementType === 'donation' ? '' : 'donation' }))}>
+                                          <span className="cr-agreement-icon">🎁</span>Donation
+                                        </button>
+                                        <button type="button"
+                                          className={`cr-agreement-btn consignment ${toteItemForm.agreementType === 'consignment' ? 'active' : ''}`}
+                                          onClick={() => setToteItemForm(p => ({ ...p, agreementType: p.agreementType === 'consignment' ? '' : 'consignment' }))}>
+                                          <span className="cr-agreement-icon">🔄</span>Consignment
+                                        </button>
+                                      </div>
                                     </div>
                                     <div className="cr-field cr-span-2">
                                       <label>Description <span className="cr-req">*</span></label>
@@ -1873,10 +1952,10 @@ function App() {
                                   </div>
                                   <div style={{ display: 'flex', gap: '.75rem', marginTop: '.85rem' }}>
                                     <button className="cr-btn-primary sm" onClick={() => saveToteItem(tote.id)}
-                                      disabled={savingToteItem || !toteItemForm.itemDescription.trim()}>
+                                      disabled={savingToteItem || !toteItemForm.itemDescription.trim() || !toteItemForm.agreementType}>
                                       {savingToteItem ? <><span className="cr-spinner"></span> Saving…</> : 'Save Item + Assign SKU'}
                                     </button>
-                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setToteItemForm({ itemDescription: '', category: 'Clothing', agreementType: 'donation', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); }}>
+                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setToteItemForm({ itemDescription: '', category: 'Clothing', agreementType: '', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); }}>
                                       Cancel
                                     </button>
                                   </div>
@@ -2539,6 +2618,37 @@ function App() {
                                     )}
                                   </div>
                                 ))}
+                                {(imagePreviews[item._key] || []).length > 0 && (
+                                  <button type="button"
+                                    disabled={!!bgRemoving[item._key]}
+                                    style={{ alignSelf: 'center', fontSize: 12, padding: '4px 10px', background: bgRemoving[item._key] ? '#e5e7eb' : '#f0fdf4', color: bgRemoving[item._key] ? '#9ca3af' : '#166534', border: '1px solid #bbf7d0', borderRadius: 6, cursor: bgRemoving[item._key] ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}
+                                    onClick={async () => {
+                                      const file = (imageFiles[item._key] || [])[0];
+                                      if (!file) return;
+                                      setBgRemoving(prev => ({ ...prev, [item._key]: true }));
+                                      try {
+                                        const processed = await removeBackgroundToWhite(file);
+                                        const reader = new FileReader();
+                                        reader.onloadend = () => {
+                                          setImagePreviews(prev => {
+                                            const arr = [...(prev[item._key] || [])];
+                                            arr[0] = String(reader.result);
+                                            return { ...prev, [item._key]: arr };
+                                          });
+                                        };
+                                        reader.readAsDataURL(processed);
+                                        setImageFiles(prev => {
+                                          const arr = [...(prev[item._key] || [])];
+                                          arr[0] = processed;
+                                          return { ...prev, [item._key]: arr };
+                                        });
+                                      } catch (err) {
+                                        console.error('Background removal failed:', err);
+                                      } finally { setBgRemoving(prev => ({ ...prev, [item._key]: false })); }
+                                    }}>
+                                    {bgRemoving[item._key] ? <><span className="cr-spinner sm"></span> Removing…</> : '✂ White Background'}
+                                  </button>
+                                )}
                                 {(imagePreviews[item._key] || []).length < 4 && (
                                   <div className="cr-upload-zone compact add-more">
                                     <input type="file" id={`img-${item._key}`} accept="image/*" multiple
@@ -2700,6 +2810,21 @@ function App() {
             ))}
           </div>
 
+          <div className="cr-category-filter">
+            <span className="cr-cat-filter-label">View:</span>
+            {[
+              ['all', 'All Items'],
+              ['clothing', '👕 Clothing'],
+              ['other', '📦 Everything Else'],
+            ].map(([key, label]) => (
+              <button key={key}
+                className={`cr-cat-filter-btn ${categoryFilter === key ? 'on' : ''}`}
+                onClick={() => setCategoryFilter(key)}>
+                {label}
+              </button>
+            ))}
+          </div>
+
           {listLoading ? (
             <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading inventory…</p></div>
           ) : items.length === 0 ? (
@@ -2760,6 +2885,9 @@ function App() {
                         <span className="cr-tag location">{item.storage_location}</span>
                         <span className={`cr-tag age ${days >= 30 ? 'warn' : ''}`}>{days}d</span>
                         {item.notification_sent && <span className="cr-tag sent" title="Notification sent">Sent</span>}
+                        {item.donation?.tote_number && (
+                          <span className="cr-tag tote" title="Tote number">#{item.donation.tote_number}</span>
+                        )}
                         <svg className={`cr-chevron ${isExp ? 'open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
                           <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
