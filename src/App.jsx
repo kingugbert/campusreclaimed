@@ -59,8 +59,8 @@ const CLOTHING_CONDITIONS = ['New with tags', 'Like New', 'Good', 'Fair', 'Worn'
 
 const FURNITURE_SUBCATEGORIES = [
   'Chair', 'Sofa / Loveseat', 'Sectional', 'Table (Dining)', 'Table (Coffee/End)',
-  'Desk', 'Dresser / Chest', 'Bed Frame', 'Bookcase / Shelving', 'Cabinet / Storage',
-  'Nightstand', 'Ottoman', 'Bench', 'Office Chair', 'Other',
+  'Desk / Desk Hutch', 'Dresser / Chest', 'Bed Frame', 'Bookcase / Shelving', 'Cabinet / Storage',
+  'Nightstand', 'Ottoman', 'Bench', 'Office Chair', 'Lamp', 'Other',
 ];
 const FURNITURE_MATERIALS = [
   'Wood (Solid)', 'Wood (Engineered/MDF)', 'Metal', 'Upholstered (Fabric)',
@@ -188,6 +188,91 @@ function ParticipationBadge({ status, large = false }) {
   );
 }
 
+/* ── Reference Templates Panel (admin + staff) ── */
+function ReferenceTemplatesPanel({ supabase }) {
+  const [templates, setTemplates] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(null);
+  const [filterCat, setFilterCat] = React.useState('');
+
+  const load = async () => {
+    if (!supabase) return;
+    setLoading(true);
+    try {
+      let q = supabase.from('item_templates').select('*').order('created_at', { ascending: false });
+      if (filterCat) q = q.eq('category', filterCat);
+      const { data } = await q;
+      setTemplates(data || []);
+    } finally { setLoading(false); }
+  };
+
+  React.useEffect(() => { if (open) load(); }, [open, filterCat]);
+
+  const del = async (id) => {
+    if (!window.confirm('Delete this reference template?')) return;
+    setDeleting(id);
+    try { await supabase.from('item_templates').delete().eq('id', id); setTemplates(p => p.filter(t => t.id !== id)); }
+    finally { setDeleting(null); }
+  };
+
+  return (
+    <div className="cr-users-list" style={{ marginTop: '1.5rem' }}>
+      <div className="cr-users-list-header" style={{ cursor: 'pointer' }} onClick={() => setOpen(p => !p)}>
+        <h3>📋 Reference Item Templates {open && <span className="cr-hint" style={{ fontWeight: 400 }}>({templates.length})</span>}</h3>
+        <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{open ? '▲ Hide' : '▼ Show'}</span>
+      </div>
+      {open && (
+        <div>
+          <p style={{ fontSize: '0.82rem', color: '#6b7280', margin: '0 0 0.75rem' }}>
+            Templates are saved when staff or ambassadors check "Save as template" while adding an item. They pre-populate description and dimensions for similar items.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+            <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: '0.85rem' }}>
+              <option value="">All categories</option>
+              {['Bedding','Books','Clothing','Electronics','Furniture','Headboards','Kitchen','Other'].map(c => <option key={c}>{c}</option>)}
+            </select>
+            <button className="cr-act edit" onClick={load} disabled={loading}>{loading ? <span className="cr-spinner sm"></span> : '↻'} Refresh</button>
+          </div>
+          {loading ? <div className="cr-loading"><span className="cr-spinner lg"></span></div> :
+            templates.length === 0 ? <p className="cr-section-desc">No templates yet. Add items with "Save as template" checked.</p> : (
+            <table style={{ width: '100%', fontSize: '0.82rem', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>Category</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>Type</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>Description</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>Dimensions (W×D×H)</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>Added by</th>
+                  <th style={{ padding: '6px 8px' }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {templates.map(t => (
+                  <tr key={t.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: '6px 8px' }}>{t.category}</td>
+                    <td style={{ padding: '6px 8px' }}>{t.subcategory || '—'}</td>
+                    <td style={{ padding: '6px 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.description || '—'}</td>
+                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                      {(t.dim_w || t.dim_d || t.dim_h) ? `${t.dim_w || '?'}" × ${t.dim_d || '?'}" × ${t.dim_h || '?'}"` : '—'}
+                    </td>
+                    <td style={{ padding: '6px 8px', color: '#6b7280' }}>{t.created_by_name || '—'}</td>
+                    <td style={{ padding: '6px 8px' }}>
+                      <button className="cr-act danger" disabled={deleting === t.id} onClick={() => del(t.id)}>
+                        {deleting === t.id ? <span className="cr-spinner sm"></span> : 'Delete'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ================================================================== */
 function App() {
   /* ── auth ── */
@@ -300,13 +385,16 @@ function App() {
   const [newToteForm, setNewToteForm]             = useState({ donorId: '', pickupDate: new Date().toISOString().split('T')[0] });
   const [creatingTote, setCreatingTote]           = useState(false);
   const [addingToTote, setAddingToTote]           = useState(null);
-  const [toteItemForm, setToteItemForm]           = useState({ itemDescription: '', category: 'Clothing', metadata: {} });
+  const [toteItemForm, setToteItemForm]           = useState({ itemDescription: '', storageLocation: '', category: 'Clothing', agreementType: '', metadata: {} });
+  const [itemTemplates, setItemTemplates]         = useState([]); // templates matching current subcategory
+  const [saveAsTemplate, setSaveAsTemplate]       = useState(false); // checkbox on save form
   const [toteItemFiles, setToteItemFiles]         = useState([]);
   const [toteItemPreviews, setToteItemPreviews]   = useState([]);
   const [toteAiStatus, setToteAiStatus]           = useState('idle');
-  const [bgRemovingTote, setBgRemovingTote]       = useState(false);
+  const [bgRemovingTote, setBgRemovingTote]       = useState(null); // null | index
   const [bgRemoving, setBgRemoving]               = useState({});  // { itemKey: bool }
   const [savingToteItem, setSavingToteItem]       = useState(false);
+  const [editingToteItem, setEditingToteItem]     = useState(null);
   const [myItems, setMyItems]                     = useState([]);
   const [myItemsLoading, setMyItemsLoading]       = useState(false);
   const [myCommissions, setMyCommissions]         = useState([]);
@@ -342,6 +430,59 @@ function App() {
     } catch (err) { console.error('Donor search error:', err); }
     finally { setDonorSearching(false); }
   }, []);
+
+  /* ── Item Templates: fetch by category + subcategory ── */
+  const fetchItemTemplates = useCallback(async (category, subcategory) => {
+    if (!supabase || !category) { setItemTemplates([]); return; }
+    try {
+      let q = supabase.from('item_templates').select('*').eq('category', category).order('created_at', { ascending: false });
+      if (subcategory) q = q.eq('subcategory', subcategory);
+      const { data, error } = await q;
+      if (error) throw error;
+      setItemTemplates(data || []);
+    } catch (err) { console.error('fetchItemTemplates error:', err); setItemTemplates([]); }
+  }, [supabase]);
+
+  const applyItemTemplate = (template, setForm) => {
+    setForm(p => ({
+      ...p,
+      itemDescription: template.description || p.itemDescription,
+      metadata: {
+        ...p.metadata,
+        subcategory: template.subcategory || p.metadata.subcategory,
+        dim_w: template.dim_w != null ? String(template.dim_w) : p.metadata.dim_w,
+        dim_d: template.dim_d != null ? String(template.dim_d) : p.metadata.dim_d,
+        dim_h: template.dim_h != null ? String(template.dim_h) : p.metadata.dim_h,
+        color: template.color || p.metadata.color,
+        material: template.material || p.metadata.material,
+        style: template.style || p.metadata.style,
+        condition: template.condition || p.metadata.condition,
+      }
+    }));
+  };
+
+  const saveItemTemplate = async (form) => {
+    if (!supabase) return;
+    try {
+      const dimW = parseFloat(form.metadata.dim_w) || null;
+      const dimD = parseFloat(form.metadata.dim_d) || null;
+      const dimH = parseFloat(form.metadata.dim_h) || null;
+      await supabase.from('item_templates').insert({
+        category: form.category,
+        subcategory: form.metadata.subcategory || null,
+        description: form.itemDescription.trim() || null,
+        dim_w: dimW,
+        dim_d: dimD,
+        dim_h: dimH,
+        color: form.metadata.color || null,
+        material: form.metadata.material || null,
+        style: form.metadata.style || null,
+        condition: form.metadata.condition || null,
+        created_by: session?.user?.id,
+        created_by_name: session?.user?.user_metadata?.full_name || session?.user?.email || null,
+      });
+    } catch (err) { console.error('saveItemTemplate error:', err); }
+  };
 
   useEffect(() => {
     if (searchTimeout.current) clearTimeout(searchTimeout.current);
@@ -677,16 +818,13 @@ function App() {
       const { data, error } = await supabase
         .from('totes')
         .select(`*, donor:donors(id, donor_name, donor_email, phone_number),
-                 items:donation_items(id, sku, item_description, metadata, status, item_images(id, image_url, display_order))`)
+                 items:donation_items(id, sku, item_description, metadata, status, storage_location, item_images(id, image_url, display_order))`)
         .order('created_at', { ascending: false });
       if (error) throw error;
-      // Sort: active totes (status not 'completed') float to top, then by created_at desc
-      const sorted = (data || []).slice().sort((a, b) => {
-        const aActive = a.status !== 'completed' ? 0 : 1;
-        const bActive = b.status !== 'completed' ? 0 : 1;
-        if (aActive !== bActive) return aActive - bActive;
-        return new Date(b.created_at) - new Date(a.created_at);
-      });
+      // Sort: most recently requested first
+      const sorted = (data || []).slice().sort((a, b) =>
+        new Date(b.created_at) - new Date(a.created_at)
+      );
       setTotes(sorted);
     } catch (err) { console.error('Fetch totes error:', err); }
     finally { setTotesLoading(false); }
@@ -764,13 +902,22 @@ function App() {
   };
 
   const handleToteItemPhoto = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setToteItemFiles([file]);
-    const reader = new FileReader();
-    reader.onloadend = () => setToteItemPreviews([String(reader.result)]);
-    reader.readAsDataURL(file);
-    analyzeToteItemImage(file);
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const existing = toteItemFiles;
+    const remaining = 5 - existing.length;
+    if (remaining <= 0) { setMessage({ type: 'error', text: 'Maximum 5 photos per item.' }); return; }
+    const toAdd = files.slice(0, remaining);
+    const isFirst = existing.length === 0;
+    setToteItemFiles(prev => [...prev, ...toAdd]);
+    toAdd.forEach((file, idx) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setToteItemPreviews(prev => [...prev, String(reader.result)]);
+        if (isFirst && idx === 0) analyzeToteItemImage(file);
+      };
+      reader.readAsDataURL(file);
+    });
     e.target.value = '';
   };
 
@@ -809,16 +956,25 @@ function App() {
         donationId = newDonation.id;
       }
 
-      // Upload photo if present
-      let imageUrl = null;
-      if (toteItemFiles[0]) {
-        const ext  = toteItemFiles[0].name.split('.').pop();
-        const path = `${tote.donor_id}/${toteId}/${sku}.${ext}`;
-        const { error: upErr } = await supabase.storage.from('inventory').upload(path, toteItemFiles[0]);
+      // Upload all photos
+      const imageUrls = [];
+      for (let idx = 0; idx < toteItemFiles.length; idx++) {
+        const file = toteItemFiles[idx];
+        const ext  = file.name.split('.').pop();
+        const path = `${tote.donor_id}/${toteId}/${sku}-${idx}.${ext}`;
+        const { error: upErr } = await supabase.storage.from('inventory').upload(path, file);
         if (!upErr) {
           const { data: urlData } = supabase.storage.from('inventory').getPublicUrl(path);
-          imageUrl = urlData.publicUrl;
+          imageUrls.push(urlData.publicUrl);
         }
+      }
+      const primaryImageUrl = imageUrls.length > 0 ? imageUrls[0] : null;
+
+      // Assemble dimensions string from split fields
+      const meta = { ...toteItemForm.metadata };
+      if (meta.dim_w || meta.dim_d || meta.dim_h) {
+        const parts = [meta.dim_w, meta.dim_d, meta.dim_h].map(v => v ? `${v}"` : '?');
+        meta.dimensions = parts.join(' × ');
       }
 
       // Insert item
@@ -831,15 +987,24 @@ function App() {
           item_description: toteItemForm.itemDescription.trim(),
           category: toteItemForm.category || 'Clothing',
           agreement_type: toteItemForm.agreementType || 'donation',
-          storage_location: 'Tote Intake',
-          metadata: toteItemForm.metadata,
-          item_image_url: imageUrl,
+          storage_location: toteItemForm.storageLocation.trim() || 'Tote Intake',
+          metadata: meta,
+          item_image_url: primaryImageUrl,
           uploaded_by: session?.user?.id,
           status: 'in_storage',
         })
         .select('id, sku, item_description, metadata, status')
         .single();
       if (itemErr) throw itemErr;
+
+      // Insert into item_images table
+      if (imageUrls.length > 0) {
+        const imageRows = imageUrls.map((url, i) => ({ item_id: newItem.id, image_url: url, display_order: i }));
+        await supabase.from('item_images').insert(imageRows);
+      }
+
+      // Save as template if checked
+      if (saveAsTemplate) { await saveItemTemplate({ ...toteItemForm, metadata: meta }); setSaveAsTemplate(false); }
 
       // Update totes state
       setTotes(prev => prev.map(t => t.id === toteId
@@ -848,12 +1013,63 @@ function App() {
       ));
 
       // Reset form
-      setToteItemForm({ itemDescription: '', category: 'Clothing', agreementType: '', metadata: {} });
+      setToteItemForm({ itemDescription: '', storageLocation: '', category: 'Clothing', agreementType: '', metadata: {} });
       setToteItemFiles([]);
       setToteItemPreviews([]);
       setToteAiStatus('idle');
       setAddingToTote(null);
     } catch (err) { console.error('Save tote item error:', err); }
+    finally { setSavingToteItem(false); }
+  };
+
+  const deleteToteItem = async (itemId, toteId) => {
+    if (!window.confirm('Delete this item? This cannot be undone.')) return;
+    try {
+      await supabase.from('item_images').delete().eq('item_id', itemId);
+      const { error } = await supabase.from('donation_items').delete().eq('id', itemId);
+      if (error) throw error;
+      setTotes(prev => prev.map(t => t.id === toteId
+        ? { ...t, items: (t.items || []).filter(i => i.id !== itemId) }
+        : t
+      ));
+    } catch (err) { console.error('Delete tote item error:', err); alert('Failed to delete item.'); }
+  };
+
+  const updateToteItem = async (toteId) => {
+    if (!toteItemForm.itemDescription.trim()) return;
+    if (!toteItemForm.agreementType) return;
+    setSavingToteItem(true);
+    try {
+      const updateMeta = { ...toteItemForm.metadata };
+      if (updateMeta.dim_w || updateMeta.dim_d || updateMeta.dim_h) {
+        const parts = [updateMeta.dim_w, updateMeta.dim_d, updateMeta.dim_h].map(v => v ? `${v}"` : '?');
+        updateMeta.dimensions = parts.join(' × ');
+      }
+      const { error } = await supabase
+        .from('donation_items')
+        .update({
+          item_description: toteItemForm.itemDescription.trim(),
+          category: toteItemForm.category || 'Clothing',
+          agreement_type: toteItemForm.agreementType,
+          storage_location: toteItemForm.storageLocation.trim() || 'Tote Intake',
+          metadata: updateMeta,
+        })
+        .eq('id', editingToteItem.id);
+      if (error) throw error;
+      setTotes(prev => prev.map(t => t.id === toteId
+        ? { ...t, items: (t.items || []).map(i => i.id === editingToteItem.id
+            ? { ...i, item_description: toteItemForm.itemDescription.trim(), category: toteItemForm.category || 'Clothing', agreement_type: toteItemForm.agreementType, storage_location: toteItemForm.storageLocation.trim() || 'Tote Intake', metadata: updateMeta }
+            : i)
+          }
+        : t
+      ));
+      setEditingToteItem(null);
+      setAddingToTote(null);
+      setToteItemForm({ itemDescription: '', storageLocation: '', category: 'Clothing', agreementType: '', metadata: {} });
+      setToteItemFiles([]);
+      setToteItemPreviews([]);
+      setToteAiStatus('idle');
+    } catch (err) { console.error('Update tote item error:', err); alert('Failed to update item.'); }
     finally { setSavingToteItem(false); }
   };
 
@@ -868,7 +1084,7 @@ function App() {
         .from('tote_requests')
         .select(`*, ambassador:ambassador_profiles(id, full_name, email)`)
         .not('status', 'in', '("complete","cancelled")')
-        .order('requested_at', { ascending: true });
+        .order('requested_at', { ascending: false });
 
       // Ambassadors only see their own requests
       if (userRole === 'ambassador' && session) {
@@ -1085,8 +1301,8 @@ function App() {
     const files = Array.from(e.target.files);
     if (!files.length) return;
     const existing = imageFiles[key] || [];
-    const remaining = 4 - existing.length;
-    if (remaining <= 0) { setMessage({ type: 'error', text: 'Maximum 4 photos per item.' }); return; }
+    const remaining = 5 - existing.length;
+    if (remaining <= 0) { setMessage({ type: 'error', text: 'Maximum 5 photos per item.' }); return; }
     const toAdd = files.slice(0, remaining);
     for (const file of toAdd) {
       if (file.size > 10 * 1024 * 1024) { setMessage({ type: 'error', text: 'Each image must be under 10 MB.' }); return; }
@@ -1194,7 +1410,7 @@ function App() {
       if (donError) throw donError;
 
       for (const item of validItems) {
-        // Upload all images (up to 4) for this item
+        // Upload all images (up to 5) for this item
         const imageUrls = [];
         const files = imageFiles[item._key] || [];
         for (const file of files) {
@@ -1208,6 +1424,12 @@ function App() {
         }
         // Set item_image_url to first image for backward compat / card thumbnail
         const primaryImageUrl = imageUrls.length > 0 ? imageUrls[0] : null;
+        // Assemble dimensions string from split fields
+        const itemMeta = { ...(item.metadata || {}) };
+        if (itemMeta.dim_w || itemMeta.dim_d || itemMeta.dim_h) {
+          const parts = [itemMeta.dim_w, itemMeta.dim_d, itemMeta.dim_h].map(v => v ? `${v}"` : '?');
+          itemMeta.dimensions = parts.join(' × ');
+        }
         const { data: insertedItem, error: itemError } = await supabase
           .from('donation_items')
           .insert([{
@@ -1216,7 +1438,7 @@ function App() {
             storage_location: item.storageLocation.trim(),
             item_image_url: primaryImageUrl,
             category: item.category || null,
-            metadata: Object.keys(item.metadata || {}).length > 0 ? item.metadata : null,
+            metadata: Object.keys(itemMeta).length > 0 ? itemMeta : null,
             agreement_type: item.agreementType || null,
             uploaded_by: session?.user?.id || null,
           }])
@@ -1228,7 +1450,12 @@ function App() {
           const { error: imgError } = await supabase.from('item_images').insert(imageRows);
           if (imgError) console.error('Image insert error:', imgError);
         }
+        // Save as template if checked
+        if (saveAsTemplate && item.category) {
+          await saveItemTemplate({ ...item, metadata: itemMeta });
+        }
       }
+      if (saveAsTemplate) setSaveAsTemplate(false);
 
       const count = validItems.length;
       setMessage({ type: 'success', text: `Donation recorded! ${count} item${count > 1 ? 's' : ''} added to inventory.` });
@@ -1572,6 +1799,7 @@ function App() {
                           </div>
                           <div className="cr-task-details">
                             <span>📍 {req.student_address}</span>
+                            {req.student_email && <span>📧 {req.student_email}</span>}
                             {req.student_phone && <span>📞 {req.student_phone}</span>}
                             {req.item_types && <span>👕 {req.item_types}</span>}
                             <span className="cr-hint">Requested {new Date(req.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
@@ -1749,6 +1977,15 @@ function App() {
                                       <span className="cr-tote-item-desc">{item.item_description}</span>
                                       {item.metadata?.gender && <span className="cr-tag sm">{item.metadata.gender}</span>}
                                       {item.metadata?.size && <span className="cr-tag sm">Size {item.metadata.size}</span>}
+                                      {item.storage_location && <span className="cr-tag location sm">{item.storage_location}</span>}
+                                      <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+                                        <button className="cr-btn-secondary sm" onClick={() => {
+                                          setToteItemForm({ itemDescription: item.item_description || '', storageLocation: item.storage_location || '', category: item.category || 'Clothing', agreementType: item.agreement_type || '', metadata: item.metadata || {} });
+                                          setEditingToteItem(item);
+                                          setAddingToTote(tote.id);
+                                        }}>Edit</button>
+                                        <button className="cr-btn-secondary sm" style={{ color: '#c0392b' }} onClick={() => deleteToteItem(item.id, tote.id)}>Delete</button>
+                                      </div>
                                     </div>
                                   ))}
                                 </div>
@@ -1757,7 +1994,7 @@ function App() {
                               {/* Add item form */}
                               {addingToTote === tote.id ? (
                                 <div className="cr-amb-add-item">
-                                  <h4>Add Item</h4>
+                                  <h4>{editingToteItem ? 'Edit Item' : 'Add Item'}</h4>
                                   <div className="cr-field-grid">
                                     <div className="cr-field cr-span-2">
                                       <label>
@@ -1766,46 +2003,58 @@ function App() {
                                         {toteAiStatus === 'done' && <span className="cr-ai-badge done">✦ AI filled</span>}
                                         {toteAiStatus === 'error' && <span className="cr-ai-badge error">AI unavailable</span>}
                                       </label>
-                                      {toteItemPreviews.length > 0 ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
-                                          <div className="cr-upload-thumb" style={{ width: 100, height: 80 }}>
-                                            <img src={toteItemPreviews[0]} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
-                                            <button type="button" className="cr-upload-remove"
-                                              onClick={() => { setToteItemFiles([]); setToteItemPreviews([]); setToteAiStatus('idle'); setBgRemovingTote(false); }}>&times;</button>
+                                      <div className="cr-multi-upload">
+                                        {toteItemPreviews.map((src, i) => (
+                                          <div key={i} className="cr-upload-thumb-wrap" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                                            <div className="cr-upload-thumb" style={{ width: 80, height: 70 }}>
+                                              <img src={src} alt={`Preview ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
+                                              <button type="button" className="cr-upload-remove"
+                                                onClick={() => {
+                                                  setToteItemFiles(prev => prev.filter((_, fi) => fi !== i));
+                                                  setToteItemPreviews(prev => prev.filter((_, pi) => pi !== i));
+                                                  if (i === 0) setToteAiStatus('idle');
+                                                }}>&times;</button>
+                                            </div>
+                                            <button type="button"
+                                              disabled={bgRemovingTote === i}
+                                              style={{ fontSize: 11, padding: '3px 8px', background: bgRemovingTote === i ? '#e5e7eb' : '#f0fdf4', color: bgRemovingTote === i ? '#9ca3af' : '#166534', border: '1px solid #bbf7d0', borderRadius: 6, cursor: bgRemovingTote === i ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+                                              onClick={async () => {
+                                                const file = toteItemFiles[i];
+                                                if (!file) return;
+                                                setBgRemovingTote(i);
+                                                try {
+                                                  const processed = await removeBackgroundToWhite(file);
+                                                  const reader = new FileReader();
+                                                  reader.onloadend = () => {
+                                                    setToteItemPreviews(prev => { const a = [...prev]; a[i] = String(reader.result); return a; });
+                                                  };
+                                                  reader.readAsDataURL(processed);
+                                                  setToteItemFiles(prev => { const a = [...prev]; a[i] = processed; return a; });
+                                                } catch (err) {
+                                                  console.error('Background removal failed:', err);
+                                                } finally { setBgRemovingTote(null); }
+                                              }}>
+                                              {bgRemovingTote === i ? <><span className="cr-spinner sm"></span></> : '✂'}
+                                            </button>
                                           </div>
-                                          <button type="button"
-                                            disabled={bgRemovingTote}
-                                            style={{ fontSize: 12, padding: '4px 10px', background: bgRemovingTote ? '#e5e7eb' : '#f0fdf4', color: bgRemovingTote ? '#9ca3af' : '#166534', border: '1px solid #bbf7d0', borderRadius: 6, cursor: bgRemovingTote ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
-                                            onClick={async () => {
-                                              if (!toteItemFiles[0]) return;
-                                              setBgRemovingTote(true);
-                                              try {
-                                                const processed = await removeBackgroundToWhite(toteItemFiles[0]);
-                                                const reader = new FileReader();
-                                                reader.onloadend = () => { setToteItemPreviews([String(reader.result)]); };
-                                                reader.readAsDataURL(processed);
-                                                setToteItemFiles([processed]);
-                                              } catch (err) {
-                                                console.error('Background removal failed:', err);
-                                              } finally { setBgRemovingTote(false); }
-                                            }}>
-                                            {bgRemovingTote ? <><span className="cr-spinner sm"></span> Removing…</> : '✂ White Background'}
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <label className="cr-file-label">
-                                          <div className="cr-upload-prompt compact">
-                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                                            <span className="cr-upload-text">Upload photo</span>
+                                        ))}
+                                        {toteItemPreviews.length < 5 && (
+                                          <div className="cr-upload-zone compact add-more">
+                                            <input type="file" id="tote-item-photo" accept="image/*" multiple capture="environment" className="cr-file-input" onChange={handleToteItemPhoto} />
+                                            <label htmlFor="tote-item-photo" className="cr-file-label compact">
+                                              <div className="cr-upload-prompt compact">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                                <span className="cr-upload-text">{toteItemPreviews.length === 0 ? 'Add photos' : 'Add more'}</span>
+                                              </div>
+                                            </label>
                                           </div>
-                                          <input type="file" accept="image/*" capture="environment" className="cr-file-input" onChange={handleToteItemPhoto} />
-                                        </label>
-                                      )}
+                                        )}
+                                      </div>
                                     </div>
                                     <div className="cr-field">
                                       <label>Category <span className="cr-req">*</span></label>
                                       <select value={toteItemForm.category || 'Clothing'}
-                                        onChange={e => setToteItemForm(p => ({ ...p, category: e.target.value, metadata: {} }))}>
+                                        onChange={e => { setToteItemForm(p => ({ ...p, category: e.target.value, metadata: {} })); setItemTemplates([]); }}>
                                         {['Bedding', 'Books', 'Clothing', 'Electronics', 'Furniture', 'Kitchen', 'Other'].map(c => (
                                           <option key={c}>{c}</option>
                                         ))}
@@ -1830,6 +2079,11 @@ function App() {
                                       <label>Description <span className="cr-req">*</span></label>
                                       <input type="text" placeholder="e.g. Red cotton t-shirt" value={toteItemForm.itemDescription}
                                         onChange={e => setToteItemForm(p => ({ ...p, itemDescription: e.target.value }))} />
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Storage Location</label>
+                                      <input type="text" placeholder="e.g. Bin A-3, Room 102" value={toteItemForm.storageLocation}
+                                        onChange={e => setToteItemForm(p => ({ ...p, storageLocation: e.target.value }))} />
                                     </div>
                                     {toteItemForm.category === 'Clothing' && (<>
                                     <div className="cr-field">
@@ -1900,19 +2154,39 @@ function App() {
                                     </>)}
                                     {toteItemForm.category === 'Furniture' && (<>
                                     <div className="cr-field">
-                                      <label>Type</label>
-                                      <select value={toteItemForm.metadata.subcategory || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, subcategory: e.target.value } }))}>
+                                      <label>Type <span style={{color:'#dc2626'}}>*</span></label>
+                                      <select value={toteItemForm.metadata.subcategory || ''} onChange={e => {
+                                        const sub = e.target.value;
+                                        setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, subcategory: sub } }));
+                                        fetchItemTemplates('Furniture', sub);
+                                      }}>
                                         <option value="">Select…</option>
                                         {FURNITURE_SUBCATEGORIES.map(v => <option key={v}>{v}</option>)}
                                       </select>
                                     </div>
+                                    {itemTemplates.length > 0 && (
+                                      <div className="cr-field cr-span-2" style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '0.5rem 0.75rem' }}>
+                                        <label style={{ color: '#16a34a', fontSize: '0.8rem', marginBottom: 4 }}>📋 Use a saved template</label>
+                                        <select defaultValue="" onChange={e => {
+                                          const t = itemTemplates.find(t => t.id === e.target.value);
+                                          if (t) applyItemTemplate(t, setToteItemForm);
+                                        }}>
+                                          <option value="">— Pick a template —</option>
+                                          {itemTemplates.map(t => (
+                                            <option key={t.id} value={t.id}>
+                                              {t.subcategory || t.category}{t.description ? ` · ${t.description.slice(0, 40)}` : ''}{(t.dim_w || t.dim_h) ? ` (${[t.dim_w,t.dim_d,t.dim_h].filter(Boolean).join('×')}")` : ''}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    )}
                                     <div className="cr-field">
-                                      <label>Color / Finish</label>
+                                      <label>Color / Finish <span style={{color:'#dc2626'}}>*</span></label>
                                       <input type="text" placeholder="e.g. Walnut Brown" value={toteItemForm.metadata.color || ''}
                                         onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
                                     </div>
                                     <div className="cr-field">
-                                      <label>Material</label>
+                                      <label>Material <span style={{color:'#dc2626'}}>*</span></label>
                                       <select value={toteItemForm.metadata.material || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, material: e.target.value } }))}>
                                         <option value="">Select…</option>
                                         {FURNITURE_MATERIALS.map(v => <option key={v}>{v}</option>)}
@@ -1926,17 +2200,25 @@ function App() {
                                       </select>
                                     </div>
                                     <div className="cr-field">
-                                      <label>Condition</label>
+                                      <label>Condition <span style={{color:'#dc2626'}}>*</span></label>
                                       <select value={toteItemForm.metadata.condition || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, condition: e.target.value } }))}>
                                         <option value="">Select…</option>
                                         {FURNITURE_CONDITIONS.map(v => <option key={v}>{v}</option>)}
                                       </select>
                                     </div>
-                                    
-                                    <div className="cr-field">
-                                      <label>Dimensions <span className="cr-hint">(W × D × H)</span></label>
-                                      <input type="text" placeholder='e.g. 60" × 30" × 36"' value={toteItemForm.metadata.dimensions || ''}
-                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, dimensions: e.target.value } }))} />
+                                    <div className="cr-field cr-span-2">
+                                      <label>Dimensions (inches)</label>
+                                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                        <input type="number" step="0.5" min="0" placeholder='W"' style={{ width: 72 }} value={toteItemForm.metadata.dim_w || ''}
+                                          onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, dim_w: e.target.value } }))} />
+                                        <span className="cr-hint">×</span>
+                                        <input type="number" step="0.5" min="0" placeholder='D"' style={{ width: 72 }} value={toteItemForm.metadata.dim_d || ''}
+                                          onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, dim_d: e.target.value } }))} />
+                                        <span className="cr-hint">×</span>
+                                        <input type="number" step="0.5" min="0" placeholder='H"' style={{ width: 72 }} value={toteItemForm.metadata.dim_h || ''}
+                                          onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, dim_h: e.target.value } }))} />
+                                        <span className="cr-hint" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>W × D × H</span>
+                                      </div>
                                     </div>
                                     <div className="cr-field">
                                       <label>Weight (lbs)</label>
@@ -1950,14 +2232,46 @@ function App() {
                                     </div>
 </>)}
                                   </div>
-                                  <div style={{ display: 'flex', gap: '.75rem', marginTop: '.85rem' }}>
-                                    <button className="cr-btn-primary sm" onClick={() => saveToteItem(tote.id)}
-                                      disabled={savingToteItem || !toteItemForm.itemDescription.trim() || !toteItemForm.agreementType}>
-                                      {savingToteItem ? <><span className="cr-spinner"></span> Saving…</> : 'Save Item + Assign SKU'}
-                                    </button>
-                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setToteItemForm({ itemDescription: '', category: 'Clothing', agreementType: '', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); }}>
+                                  {/* Required field validation summary */}
+                                  {(() => {
+                                    const m = toteItemForm.metadata;
+                                    const missing = [];
+                                    if (toteItemForm.category === 'Clothing') {
+                                      if (!m.color) missing.push('Color');
+                                      if (!m.fabric) missing.push('Material');
+                                      if (!m.condition) missing.push('Condition');
+                                      if (!m.size) missing.push('Size');
+                                    } else if (toteItemForm.category === 'Furniture') {
+                                      if (!m.subcategory) missing.push('Type');
+                                      if (!m.color) missing.push('Color / Finish');
+                                      if (!m.material) missing.push('Material');
+                                      if (!m.condition) missing.push('Condition');
+                                    }
+                                    return missing.length > 0 ? (
+                                      <p style={{ fontSize: '0.78rem', color: '#dc2626', margin: '0.5rem 0 0' }}>Required: {missing.join(', ')}</p>
+                                    ) : null;
+                                  })()}
+                                  <div style={{ display: 'flex', gap: '.75rem', marginTop: '.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    {(() => {
+                                      const m = toteItemForm.metadata;
+                                      const isFurniture = toteItemForm.category === 'Furniture';
+                                      const isClothing = toteItemForm.category === 'Clothing';
+                                      const furnitureMissing = isFurniture && (!m.subcategory || !m.color || !m.material || !m.condition);
+                                      const clothingMissing = isClothing && (!m.color || !m.fabric || !m.condition || !m.size);
+                                      const isDisabled = savingToteItem || !toteItemForm.itemDescription.trim() || !toteItemForm.agreementType || furnitureMissing || clothingMissing;
+                                      return (
+                                        <button className="cr-btn-primary sm" onClick={() => editingToteItem ? updateToteItem(tote.id) : saveToteItem(tote.id)} disabled={isDisabled}>
+                                          {savingToteItem ? <><span className="cr-spinner"></span> Saving…</> : editingToteItem ? 'Update Item' : 'Save Item + Assign SKU'}
+                                        </button>
+                                      );
+                                    })()}
+                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setEditingToteItem(null); setToteItemForm({ itemDescription: '', storageLocation: '', category: 'Clothing', agreementType: '', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); setSaveAsTemplate(false); setItemTemplates([]); }}>
                                       Cancel
                                     </button>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', color: '#374151', cursor: 'pointer', marginLeft: 'auto' }}>
+                                      <input type="checkbox" checked={saveAsTemplate} onChange={e => setSaveAsTemplate(e.target.checked)} style={{ accentColor: '#16a34a' }} />
+                                      Save as template
+                                    </label>
                                   </div>
                                 </div>
                               ) : (
@@ -2384,11 +2698,43 @@ function App() {
                                 <div className="cr-field-grid">
                                   <div className="cr-field">
                                     <label>Type</label>
-                                    <select value={item.metadata.subcategory || ''} onChange={e => handleMetaChange(item._key, 'subcategory', e.target.value)}>
+                                    <select value={item.metadata.subcategory || ''} onChange={e => {
+                                      handleMetaChange(item._key, 'subcategory', e.target.value);
+                                      fetchItemTemplates('Furniture', e.target.value);
+                                    }}>
                                       <option value="">Select type…</option>
                                       {FURNITURE_SUBCATEGORIES.map(v => <option key={v}>{v}</option>)}
                                     </select>
                                   </div>
+                                  {itemTemplates.length > 0 && (
+                                    <div className="cr-field cr-span-2" style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '0.5rem 0.75rem' }}>
+                                      <label style={{ color: '#16a34a', fontSize: '0.8rem', marginBottom: 4 }}>📋 Use a saved template</label>
+                                      <select defaultValue="" onChange={e => {
+                                        const t = itemTemplates.find(t => t.id === e.target.value);
+                                        if (t) {
+                                          handleMetaChange(item._key, 'subcategory', t.subcategory || item.metadata.subcategory);
+                                          handleMetaChange(item._key, 'dim_w', t.dim_w != null ? String(t.dim_w) : item.metadata.dim_w);
+                                          handleMetaChange(item._key, 'dim_d', t.dim_d != null ? String(t.dim_d) : item.metadata.dim_d);
+                                          handleMetaChange(item._key, 'dim_h', t.dim_h != null ? String(t.dim_h) : item.metadata.dim_h);
+                                          handleMetaChange(item._key, 'color', t.color || item.metadata.color);
+                                          handleMetaChange(item._key, 'material', t.material || item.metadata.material);
+                                          handleMetaChange(item._key, 'style', t.style || item.metadata.style);
+                                          handleMetaChange(item._key, 'condition', t.condition || item.metadata.condition);
+                                          // Also update description at item level
+                                          if (t.description) {
+                                            setItems(prev => prev.map(i => i._key === item._key ? { ...i, item_description: t.description } : i));
+                                          }
+                                        }
+                                      }}>
+                                        <option value="">— Pick a template —</option>
+                                        {itemTemplates.map(t => (
+                                          <option key={t.id} value={t.id}>
+                                            {t.subcategory || t.category}{t.description ? ` · ${t.description.slice(0, 40)}` : ''}{(t.dim_w || t.dim_h) ? ` (${[t.dim_w,t.dim_d,t.dim_h].filter(Boolean).join('×')}")` : ''}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
                                   <div className="cr-field">
                                     <label>Color / Finish</label>
                                     <input type="text" placeholder="e.g. Walnut Brown" value={item.metadata.color || ''}
@@ -2409,16 +2755,25 @@ function App() {
                                     </select>
                                   </div>
                                   <div className="cr-field">
-                                    <label>Dimensions <span className="cr-hint">(W × D × H)</span></label>
-                                    <input type="text" placeholder='e.g. 60" × 30" × 36"' value={item.metadata.dimensions || ''}
-                                      onChange={e => handleMetaChange(item._key, 'dimensions', e.target.value)} />
-                                  </div>
-                                  <div className="cr-field">
                                     <label>Condition</label>
                                     <select value={item.metadata.condition || ''} onChange={e => handleMetaChange(item._key, 'condition', e.target.value)}>
                                       <option value="">Select…</option>
                                       {FURNITURE_CONDITIONS.map(v => <option key={v}>{v}</option>)}
                                     </select>
+                                  </div>
+                                  <div className="cr-field cr-span-2">
+                                    <label>Dimensions (inches)</label>
+                                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                      <input type="number" step="0.5" min="0" placeholder='W"' style={{ width: 72 }} value={item.metadata.dim_w || ''}
+                                        onChange={e => handleMetaChange(item._key, 'dim_w', e.target.value)} />
+                                      <span className="cr-hint">×</span>
+                                      <input type="number" step="0.5" min="0" placeholder='D"' style={{ width: 72 }} value={item.metadata.dim_d || ''}
+                                        onChange={e => handleMetaChange(item._key, 'dim_d', e.target.value)} />
+                                      <span className="cr-hint">×</span>
+                                      <input type="number" step="0.5" min="0" placeholder='H"' style={{ width: 72 }} value={item.metadata.dim_h || ''}
+                                        onChange={e => handleMetaChange(item._key, 'dim_h', e.target.value)} />
+                                      <span className="cr-hint" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>W × D × H</span>
+                                    </div>
                                   </div>
                                   <div className="cr-field">
                                     <label>Weight (lbs) <span className="cr-hint">(for shipping rates)</span></label>
@@ -2594,7 +2949,7 @@ function App() {
                             </div>
                             <div className="cr-field">
                               <label>
-                                Photos <span className="cr-hint">(up to 4)</span>
+                                Photos <span className="cr-hint">(up to 5)</span>
                                 {aiStatus[item._key] === 'analyzing' && (
                                   <span className="cr-ai-badge analyzing"><span className="cr-spinner sm"></span> Analyzing…</span>
                                 )}
@@ -2607,49 +2962,49 @@ function App() {
                               </label>
                               <div className="cr-multi-upload">
                                 {(imagePreviews[item._key] || []).map((src, i) => (
-                                  <div key={i} className="cr-upload-thumb">
-                                    <img src={src} alt={`Preview ${i + 1}`} />
-                                    <button type="button" className="cr-upload-remove" onClick={() => removeItemImage(item._key, i)}
-                                      aria-label="Remove photo">&times;</button>
-                                    {i === 0 && aiStatus[item._key] !== 'analyzing' && (
-                                      <button type="button" className="cr-reanalyze"
-                                        onClick={() => analyzeItemImage(item._key, src)}
-                                        title="Re-analyze with AI">✦</button>
-                                    )}
-                                  </div>
-                                ))}
-                                {(imagePreviews[item._key] || []).length > 0 && (
-                                  <button type="button"
-                                    disabled={!!bgRemoving[item._key]}
-                                    style={{ alignSelf: 'center', fontSize: 12, padding: '4px 10px', background: bgRemoving[item._key] ? '#e5e7eb' : '#f0fdf4', color: bgRemoving[item._key] ? '#9ca3af' : '#166534', border: '1px solid #bbf7d0', borderRadius: 6, cursor: bgRemoving[item._key] ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}
-                                    onClick={async () => {
-                                      const file = (imageFiles[item._key] || [])[0];
-                                      if (!file) return;
-                                      setBgRemoving(prev => ({ ...prev, [item._key]: true }));
-                                      try {
-                                        const processed = await removeBackgroundToWhite(file);
-                                        const reader = new FileReader();
-                                        reader.onloadend = () => {
-                                          setImagePreviews(prev => {
+                                  <div key={i} className="cr-upload-thumb-wrap" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                                    <div className="cr-upload-thumb">
+                                      <img src={src} alt={`Preview ${i + 1}`} />
+                                      <button type="button" className="cr-upload-remove" onClick={() => removeItemImage(item._key, i)}
+                                        aria-label="Remove photo">&times;</button>
+                                      {i === 0 && aiStatus[item._key] !== 'analyzing' && (
+                                        <button type="button" className="cr-reanalyze"
+                                          onClick={() => analyzeItemImage(item._key, src)}
+                                          title="Re-analyze with AI">✦</button>
+                                      )}
+                                    </div>
+                                    <button type="button"
+                                      disabled={!!(bgRemoving[item._key] === i)}
+                                      style={{ fontSize: 11, padding: '3px 8px', background: bgRemoving[item._key] === i ? '#e5e7eb' : '#f0fdf4', color: bgRemoving[item._key] === i ? '#9ca3af' : '#166534', border: '1px solid #bbf7d0', borderRadius: 6, cursor: bgRemoving[item._key] === i ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+                                      onClick={async () => {
+                                        const file = (imageFiles[item._key] || [])[i];
+                                        if (!file) return;
+                                        setBgRemoving(prev => ({ ...prev, [item._key]: i }));
+                                        try {
+                                          const processed = await removeBackgroundToWhite(file);
+                                          const reader = new FileReader();
+                                          reader.onloadend = () => {
+                                            setImagePreviews(prev => {
+                                              const arr = [...(prev[item._key] || [])];
+                                              arr[i] = String(reader.result);
+                                              return { ...prev, [item._key]: arr };
+                                            });
+                                          };
+                                          reader.readAsDataURL(processed);
+                                          setImageFiles(prev => {
                                             const arr = [...(prev[item._key] || [])];
-                                            arr[0] = String(reader.result);
+                                            arr[i] = processed;
                                             return { ...prev, [item._key]: arr };
                                           });
-                                        };
-                                        reader.readAsDataURL(processed);
-                                        setImageFiles(prev => {
-                                          const arr = [...(prev[item._key] || [])];
-                                          arr[0] = processed;
-                                          return { ...prev, [item._key]: arr };
-                                        });
-                                      } catch (err) {
-                                        console.error('Background removal failed:', err);
-                                      } finally { setBgRemoving(prev => ({ ...prev, [item._key]: false })); }
-                                    }}>
-                                    {bgRemoving[item._key] ? <><span className="cr-spinner sm"></span> Removing…</> : '✂ White Background'}
-                                  </button>
-                                )}
-                                {(imagePreviews[item._key] || []).length < 4 && (
+                                        } catch (err) {
+                                          console.error('Background removal failed:', err);
+                                        } finally { setBgRemoving(prev => ({ ...prev, [item._key]: null })); }
+                                      }}>
+                                      {bgRemoving[item._key] === i ? <><span className="cr-spinner sm"></span></> : '✂'}
+                                    </button>
+                                  </div>
+                                ))}
+                                {(imagePreviews[item._key] || []).length < 5 && (
                                   <div className="cr-upload-zone compact add-more">
                                     <input type="file" id={`img-${item._key}`} accept="image/*" multiple
                                       onChange={e => handleItemImage(item._key, e)} className="cr-file-input" />
@@ -2696,7 +3051,7 @@ function App() {
                     </div>
                   )}
 
-                  <div className="cr-form-actions">
+                  <div className="cr-form-actions" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
                     <button type="button" className="cr-btn-secondary" onClick={resetDonationForm}>Cancel</button>
                     <button type="submit" className="cr-btn-primary" disabled={loading}>
                       {loading ? <><span className="cr-spinner"></span>Saving…</> : (
@@ -2704,6 +3059,10 @@ function App() {
                           ` (${donationItems.filter(i => i.itemDescription.trim()).length} items)`}</>
                       )}
                     </button>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', color: '#374151', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={saveAsTemplate} onChange={e => setSaveAsTemplate(e.target.checked)} style={{ accentColor: '#16a34a' }} />
+                      Save items as templates
+                    </label>
                   </div>
                 </>
               )}
@@ -4067,6 +4426,9 @@ function App() {
               </table>
             )}
           </div>
+
+          {/* ── Reference Item Templates ── */}
+          <ReferenceTemplatesPanel supabase={supabase} />
 
           {/* ── Active Tote Requests with reassignment ── */}
           <div className="cr-users-list" style={{ marginTop: '1.5rem' }}>

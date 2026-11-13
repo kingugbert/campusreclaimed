@@ -110,7 +110,7 @@ serve(async (req) => {
         .from("tote_requests")
         .select("id, student_name, student_email, assigned_to")
         .ilike("student_email", attendeeEmail)
-        .in("status", ["pending", "in_progress"])
+        .in("status", ["pending", "tote_out"])
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
