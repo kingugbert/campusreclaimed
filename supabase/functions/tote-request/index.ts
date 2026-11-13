@@ -5,7 +5,6 @@
 //   (none)                   → new tote request: create donor, assign ambassador, send Emails 1 + admin + ambassador
 //   send_delivery_reminder   → Email 2: tote just delivered
 //   send_pickup_schedule     → Email 3: pickup day/time window (ambassador enters)
-//   send_pickup_reminder     → Email 4: 2-hour-before reminder (called by pg_cron every 15 min)
 //   send_pickup_confirmation → Email 5 (donation) or 6 (consignment): tote was picked up
 //
 // Stage 5: Student confirmation email (Email 1) now includes a "Book your pickup time →"
@@ -73,8 +72,8 @@ serve(async (req) => {
       const { email, name } = body;
       if (!email || !name) return json({ error: "email and name required" }, 400);
 
-      // Look up the assigned ambassador's Cal.com URL for pickup scheduling
-      let pickupCalcomButton = '';
+      // Look up the assigned ambassador's Cal.com URL so we can include the booking link
+      let calcomButton = '';
       const { data: toteReq } = await supabase
         .from('tote_requests')
         .select('assigned_to')
@@ -97,7 +96,7 @@ serve(async (req) => {
             const bookingUrl = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
             bookingUrl.searchParams.set('name', name.trim());
             bookingUrl.searchParams.set('email', email.trim());
-            pickupCalcomButton = `<p style="margin-top: 20px;">
+            calcomButton = `<p style="margin-top: 20px;">
               <a href="${bookingUrl.toString()}"
                  style="display: inline-block; background: #1a3c34; color: #fff; text-decoration: none;
                         padding: 12px 24px; border-radius: 8px; font-size: 15px; font-weight: 500;">
@@ -105,11 +104,11 @@ serve(async (req) => {
               </a>
             </p>
             <p style="font-size: 13px; color: #888; margin-top: 8px;">
-              Use this link to schedule a convenient time for your ambassador to pick up your filled tote.
+              Use this link to choose a convenient time for our ambassador to come pick up your filled tote.
             </p>`;
           } catch (e) {
-            console.error('Failed to build Cal.com pickup URL:', e);
-            pickupCalcomButton = `<p style="margin-top: 20px;">
+            console.error('Failed to build Cal.com URL for delivery reminder:', e);
+            calcomButton = `<p style="margin-top: 20px;">
               <a href="${rawUrl}"
                  style="display: inline-block; background: #1a3c34; color: #fff; text-decoration: none;
                         padding: 12px 24px; border-radius: 8px; font-size: 15px; font-weight: 500;">
@@ -126,8 +125,8 @@ serve(async (req) => {
           emailWrap(`
             <p>Hi ${firstName},</p>
             <p>Your Reclaim Tote was just delivered to the address you provided. Please fill the tote and complete the agreement, if you haven't already, using this link: <a href="${AGREEMENT_URL}" style="color: #1a3c34;">${AGREEMENT_URL}</a>.</p>
-            <p>Once your tote is filled and ready, use the link below to schedule a convenient pickup time with your ambassador.</p>
-            ${pickupCalcomButton}
+            <p>Once your tote is filled and ready, use the link below to schedule a pickup time with your Campus Reclaimed ambassador.</p>
+            ${calcomButton}
             <p>Please let us know if you have any questions. Thank you again for choosing Campus Reclaimed.</p>
             <p>Best,<br>The Campus Reclaimed Team</p>
           `)
@@ -171,79 +170,6 @@ serve(async (req) => {
       }).eq("id", tote_request_id);
 
       return json({ success: true });
-    }
-
-    // ════════════════════════════════════════════════════════
-    // ACTION: send_pickup_reminder  (Email 4)
-    // Called by pg_cron every 15 min — sends 2-hour-before reminder
-    // Finds all scheduled totes where scheduled_at is 1h45m–2h15m
-    // from now and reminder_sent = false, then emails each student.
-    // ════════════════════════════════════════════════════════
-    if (action === 'send_pickup_reminder') {
-      if (!resendKey) return json({ success: true, sent: 0, reason: 'no_resend_key' });
-
-      const now = new Date();
-      const lo  = new Date(now.getTime() + (1 * 60 + 45) * 60_000); // now + 1h45m
-      const hi  = new Date(now.getTime() + (2 * 60 + 15) * 60_000); // now + 2h15m
-
-      const { data: due, error: dueErr } = await supabase
-        .from('tote_requests')
-        .select('id, student_name, student_email, assigned_to')
-        .eq('status', 'scheduled')
-        .eq('reminder_sent', false)
-        .gte('scheduled_at', lo.toISOString())
-        .lte('scheduled_at', hi.toISOString());
-
-      if (dueErr) {
-        console.error('send_pickup_reminder query error:', dueErr.message);
-        return json({ error: 'DB error' }, 500);
-      }
-
-      if (!due || due.length === 0) {
-        console.log('send_pickup_reminder: no reminders due');
-        return json({ success: true, sent: 0 });
-      }
-
-      let sent = 0;
-      for (const tote of due) {
-        // Look up ambassador name for personalization
-        let ambName = 'your Campus Reclaimed ambassador';
-        if (tote.assigned_to) {
-          const { data: amb } = await supabase
-            .from('ambassador_profiles')
-            .select('full_name')
-            .eq('id', tote.assigned_to)
-            .maybeSingle();
-          if (amb?.full_name) ambName = amb.full_name;
-        }
-
-        const firstName = (tote.student_name || 'there').split(' ')[0];
-        const ok = await sendEmail(
-          resendKey,
-          tote.student_email,
-          "Reminder: Your Tote Pickup Is Today",
-          emailWrap(`
-            <p>Hi ${firstName},</p>
-            <p>This is a friendly reminder that your Reclaim Tote pickup is scheduled for <strong>approximately 2 hours from now</strong>.</p>
-            <p>Please make sure your filled tote is placed outside your door so ${ambName} can collect it at the scheduled time.</p>
-            <p>If you need to reschedule, please contact us by replying to this email as soon as possible.</p>
-            <p>Thank you for choosing Campus Reclaimed!</p>
-            <p>Best,<br>The Campus Reclaimed Team</p>
-          `)
-        );
-
-        if (ok) {
-          await supabase
-            .from('tote_requests')
-            .update({ reminder_sent: true })
-            .eq('id', tote.id);
-          sent++;
-          console.log(`send_pickup_reminder: sent to ${tote.student_email} (tote ${tote.id})`);
-        }
-      }
-
-      console.log(`send_pickup_reminder: sent ${sent} of ${due.length} reminders`);
-      return json({ success: true, sent, total: due.length });
     }
 
     // ════════════════════════════════════════════════════════
@@ -393,8 +319,7 @@ serve(async (req) => {
     if (resendKey) {
       const firstName = name.split(' ')[0];
 
-      // Build optional Cal.com booking button for Email 1
-      // Pre-fill the student's name and email so they appear as the attendee in the booking
+      // Email 1: Student confirmation — Cal.com drop-off scheduling button
       let dropoffCalcomButton = '';
       if (ambCalcomUrl) {
         try {
@@ -412,7 +337,7 @@ serve(async (req) => {
             Use this link to schedule a convenient time for your ambassador to drop off your tote.
           </p>`;
         } catch (e) {
-          console.error('Failed to build Cal.com URL:', e);
+          console.error('Failed to build Cal.com drop-off URL:', e);
           dropoffCalcomButton = `<p style="margin-top: 20px;">
             <a href="${ambCalcomUrl}"
                style="display: inline-block; background: #1a3c34; color: #fff; text-decoration: none;
@@ -423,13 +348,13 @@ serve(async (req) => {
         }
       }
 
-      // Email 1: Student confirmation — exact wording per 9/16 meeting notes + Cal.com drop-off button
       await sendEmail(resendKey, email.trim(), "Campus Reclaimed – Reclaim Tote Request",
         emailWrap(`
           <p>Hi ${firstName},</p>
           <p>Thank you for your support of Campus Reclaimed and requesting a Reclaim Tote.</p>
-          <p>Your Reclaim Tote will be delivered in the next 24-48 hours to the address you provided. Please fill out our agreement: <a href="${AGREEMENT_URL}" style="color: #1a3c34;">${AGREEMENT_URL}</a>. These instructions indicate whether you are selling items on consignment or donating them. You will receive another email approximately 24-48 hours after the bag was delivered, explaining the time frame it should be filled and placed outside your door.</p>
+          <p>Your Reclaim Tote will be delivered in the next 24-48 hours to the address you provided. Please fill out our agreement: <a href="${AGREEMENT_URL}" style="color: #1a3c34;">${AGREEMENT_URL}</a>. These instructions indicate whether you are selling items on consignment or donating them.</p>
           ${dropoffCalcomButton}
+          <p>Once your tote is filled, you will receive a separate email with a link to schedule a convenient pickup time.</p>
           <p>Thank you again for choosing Campus Reclaimed. It means more when it is reclaimed!</p>
           <p>Best,<br>The Campus Reclaimed Team</p>
         `)
