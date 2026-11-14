@@ -985,8 +985,8 @@ function App() {
           metadata: (() => {
             const meta = { ...toteItemForm.metadata };
             if (meta.dim_w || meta.dim_d || meta.dim_h) {
-              const parts = [meta.dim_w, meta.dim_d, meta.dim_h].map(v => v ? `${v}"` : '?');
-              meta.dimensions = parts.join(' × ');
+              const parts = [[meta.dim_w, 'W'], [meta.dim_d, 'D'], [meta.dim_h, 'H']].map(([v, l]) => v ? `${v}" ${l}` : `?" ${l}`);
+              meta.dimensions = parts.join(' x ');
             }
             return meta;
           })(),
@@ -1008,7 +1008,7 @@ function App() {
       if (saveAsTemplate) {
         const meta = { ...toteItemForm.metadata };
         if (meta.dim_w || meta.dim_d || meta.dim_h) {
-          meta.dimensions = [meta.dim_w, meta.dim_d, meta.dim_h].map(v => v ? `${v}"` : '?').join(' × ');
+          meta.dimensions = [[meta.dim_w, 'W'], [meta.dim_d, 'D'], [meta.dim_h, 'H']].map(([v, l]) => v ? `${v}" ${l}` : `?" ${l}`).join(' x ');
         }
         await saveItemTemplate({ ...toteItemForm, metadata: meta });
         setSaveAsTemplate(false);
@@ -1439,8 +1439,8 @@ function App() {
             metadata: (() => {
               const itemMeta = { ...(item.metadata || {}) };
               if (itemMeta.dim_w || itemMeta.dim_d || itemMeta.dim_h) {
-                const parts = [itemMeta.dim_w, itemMeta.dim_d, itemMeta.dim_h].map(v => v ? `${v}"` : '?');
-                itemMeta.dimensions = parts.join(' × ');
+                const parts = [[itemMeta.dim_w, 'W'], [itemMeta.dim_d, 'D'], [itemMeta.dim_h, 'H']].map(([v, l]) => v ? `${v}" ${l}` : `?" ${l}`);
+                itemMeta.dimensions = parts.join(' x ');
               }
               return Object.keys(itemMeta).length > 0 ? itemMeta : null;
             })(),
@@ -1459,7 +1459,7 @@ function App() {
         if (saveAsTemplate && item.category) {
           const itemMeta = { ...(item.metadata || {}) };
           if (itemMeta.dim_w || itemMeta.dim_d || itemMeta.dim_h) {
-            itemMeta.dimensions = [itemMeta.dim_w, itemMeta.dim_d, itemMeta.dim_h].map(v => v ? `${v}"` : '?').join(' × ');
+            itemMeta.dimensions = [[itemMeta.dim_w, 'W'], [itemMeta.dim_d, 'D'], [itemMeta.dim_h, 'H']].map(([v, l]) => v ? `${v}" ${l}` : `?" ${l}`).join(' x ');
           }
           await saveItemTemplate({ ...item, metadata: itemMeta });
         }
