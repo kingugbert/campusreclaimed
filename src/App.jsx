@@ -188,79 +188,80 @@ function ParticipationBadge({ status, large = false }) {
   );
 }
 
-/* ── Reference Templates Panel (admin + staff) ── */
+/* ================================================================== */
 function ReferenceTemplatesPanel({ supabase }) {
+  const [open, setOpen] = React.useState(false);
   const [templates, setTemplates] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
-  const [open, setOpen] = React.useState(false);
-  const [deleting, setDeleting] = React.useState(null);
-  const [filterCat, setFilterCat] = React.useState('');
+  const [catFilter, setCatFilter] = React.useState('');
 
   const load = async () => {
     if (!supabase) return;
     setLoading(true);
     try {
       let q = supabase.from('item_templates').select('*').order('created_at', { ascending: false });
-      if (filterCat) q = q.eq('category', filterCat);
+      if (catFilter) q = q.eq('category', catFilter);
       const { data } = await q;
       setTemplates(data || []);
-    } finally { setLoading(false); }
+    } catch(e) { console.error(e); }
+    finally { setLoading(false); }
   };
 
-  React.useEffect(() => { if (open) load(); }, [open, filterCat]);
+  React.useEffect(() => { if (open) load(); }, [open, catFilter]);
 
   const del = async (id) => {
-    if (!window.confirm('Delete this reference template?')) return;
-    setDeleting(id);
-    try { await supabase.from('item_templates').delete().eq('id', id); setTemplates(p => p.filter(t => t.id !== id)); }
-    finally { setDeleting(null); }
+    if (!window.confirm('Delete this template?')) return;
+    await supabase.from('item_templates').delete().eq('id', id);
+    setTemplates(ts => ts.filter(t => t.id !== id));
   };
 
   return (
-    <div className="cr-users-list" style={{ marginTop: '1.5rem' }}>
-      <div className="cr-users-list-header" style={{ cursor: 'pointer' }} onClick={() => setOpen(p => !p)}>
-        <h3>📋 Reference Item Templates {open && <span className="cr-hint" style={{ fontWeight: 400 }}>({templates.length})</span>}</h3>
-        <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{open ? '▲ Hide' : '▼ Show'}</span>
+    <div style={{ marginTop: '1.5rem', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+      <div onClick={() => setOpen(o => !o)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#f9fafb', cursor: 'pointer', userSelect: 'none' }}>
+        <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>📋 Reference Item Templates</span>
+        <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>{open ? '▲ Collapse' : '▼ Expand'}</span>
       </div>
       {open && (
-        <div>
-          <p style={{ fontSize: '0.82rem', color: '#6b7280', margin: '0 0 0.75rem' }}>
-            Templates are saved when staff or ambassadors check "Save as template" while adding an item. They pre-populate description and dimensions for similar items.
-          </p>
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-            <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: '0.85rem' }}>
+        <div style={{ padding: '1rem' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem', alignItems: 'center' }}>
+            <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ fontSize: '0.82rem', padding: '0.25rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db' }}>
               <option value="">All categories</option>
-              {['Bedding','Books','Clothing','Electronics','Furniture','Headboards','Kitchen','Other'].map(c => <option key={c}>{c}</option>)}
+              <option>Furniture</option>
+              <option>Clothing</option>
+              <option>Electronics</option>
+              <option>Books</option>
+              <option>Kitchen</option>
+              <option>Other</option>
             </select>
-            <button className="cr-act edit" onClick={load} disabled={loading}>{loading ? <span className="cr-spinner sm"></span> : '↻'} Refresh</button>
+            <button onClick={load} style={{ fontSize: '0.78rem', padding: '0.25rem 0.6rem', borderRadius: 4, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>↻ Refresh</button>
+            <span style={{ fontSize: '0.78rem', color: '#6b7280', marginLeft: 'auto' }}>{templates.length} template{templates.length !== 1 ? 's' : ''}</span>
           </div>
-          {loading ? <div className="cr-loading"><span className="cr-spinner lg"></span></div> :
-            templates.length === 0 ? <p className="cr-section-desc">No templates yet. Add items with "Save as template" checked.</p> : (
-            <table style={{ width: '100%', fontSize: '0.82rem', borderCollapse: 'collapse' }}>
+          {loading ? <p style={{ fontSize: '0.82rem', color: '#6b7280' }}>Loading…</p> : templates.length === 0 ? (
+            <p style={{ fontSize: '0.82rem', color: '#9ca3af', fontStyle: 'italic' }}>No templates saved yet. Check "Save as template" when adding items.</p>
+          ) : (
+            <table style={{ width: '100%', fontSize: '0.78rem', borderCollapse: 'collapse' }}>
               <thead>
-                <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>Category</th>
-                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>Type</th>
-                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>Description</th>
-                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>Dimensions (W×D×H)</th>
-                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>Added by</th>
-                  <th style={{ padding: '6px 8px' }}></th>
+                <tr style={{ background: '#f3f4f6', textAlign: 'left' }}>
+                  <th style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #e5e7eb' }}>Category</th>
+                  <th style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #e5e7eb' }}>Type</th>
+                  <th style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #e5e7eb' }}>Description</th>
+                  <th style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #e5e7eb' }}>Dimensions</th>
+                  <th style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #e5e7eb' }}>Added by</th>
+                  <th style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #e5e7eb' }}></th>
                 </tr>
               </thead>
               <tbody>
                 {templates.map(t => (
                   <tr key={t.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={{ padding: '6px 8px' }}>{t.category}</td>
-                    <td style={{ padding: '6px 8px' }}>{t.subcategory || '—'}</td>
-                    <td style={{ padding: '6px 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.description || '—'}</td>
-                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
-                      {(t.dim_w || t.dim_d || t.dim_h) ? `${t.dim_w || '?'}" × ${t.dim_d || '?'}" × ${t.dim_h || '?'}"` : '—'}
+                    <td style={{ padding: '0.3rem 0.5rem' }}>{t.category}</td>
+                    <td style={{ padding: '0.3rem 0.5rem' }}>{t.subcategory || '—'}</td>
+                    <td style={{ padding: '0.3rem 0.5rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.description || '—'}</td>
+                    <td style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>
+                      {(t.dim_w || t.dim_d || t.dim_h) ? [t.dim_w, t.dim_d, t.dim_h].filter(Boolean).join('×') + '"' : '—'}
                     </td>
-                    <td style={{ padding: '6px 8px', color: '#6b7280' }}>{t.created_by_name || '—'}</td>
-                    <td style={{ padding: '6px 8px' }}>
-                      <button className="cr-act danger" disabled={deleting === t.id} onClick={() => del(t.id)}>
-                        {deleting === t.id ? <span className="cr-spinner sm"></span> : 'Delete'}
-                      </button>
+                    <td style={{ padding: '0.3rem 0.5rem', color: '#6b7280' }}>{t.created_by_name || '—'}</td>
+                    <td style={{ padding: '0.3rem 0.5rem' }}>
+                      <button onClick={() => del(t.id)} style={{ fontSize: '0.72rem', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Delete</button>
                     </td>
                   </tr>
                 ))}
@@ -386,8 +387,6 @@ function App() {
   const [creatingTote, setCreatingTote]           = useState(false);
   const [addingToTote, setAddingToTote]           = useState(null);
   const [toteItemForm, setToteItemForm]           = useState({ itemDescription: '', storageLocation: '', category: 'Clothing', agreementType: '', metadata: {} });
-  const [itemTemplates, setItemTemplates]         = useState([]); // templates matching current subcategory
-  const [saveAsTemplate, setSaveAsTemplate]       = useState(false); // checkbox on save form
   const [toteItemFiles, setToteItemFiles]         = useState([]);
   const [toteItemPreviews, setToteItemPreviews]   = useState([]);
   const [toteAiStatus, setToteAiStatus]           = useState('idle');
@@ -410,6 +409,8 @@ function App() {
   /* ── pickup scheduling state ── */
   const [pickupWindowInputs, setPickupWindowInputs]     = useState({}); // { req.id: 'text...' }
   const [sendingPickupSchedule, setSendingPickupSchedule] = useState(null); // req.id being scheduled
+  const [itemTemplates, setItemTemplates]               = useState([]); // templates matching current subcategory
+  const [saveAsTemplate, setSaveAsTemplate]             = useState(false); // checkbox on save form
 
   /* ════════════════════════════════════════════════
      DONOR SEARCH (for donation form)
@@ -431,7 +432,17 @@ function App() {
     finally { setDonorSearching(false); }
   }, []);
 
-  /* ── Item Templates: fetch by category + subcategory ── */
+  useEffect(() => {
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    if (donorSearch.trim().length >= 2) {
+      searchTimeout.current = setTimeout(() => searchDonors(donorSearch), 300);
+    } else { setDonorResults([]); }
+    return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current); };
+  }, [donorSearch, searchDonors]);
+
+  /* ════════════════════════════════════════════════
+     ITEM TEMPLATES
+     ════════════════════════════════════════════════ */
   const fetchItemTemplates = useCallback(async (category, subcategory) => {
     if (!supabase || !category) { setItemTemplates([]); return; }
     try {
@@ -470,10 +481,8 @@ function App() {
       await supabase.from('item_templates').insert({
         category: form.category,
         subcategory: form.metadata.subcategory || null,
-        description: form.itemDescription.trim() || null,
-        dim_w: dimW,
-        dim_d: dimD,
-        dim_h: dimH,
+        description: form.itemDescription ? form.itemDescription.trim() || null : null,
+        dim_w: dimW, dim_d: dimD, dim_h: dimH,
         color: form.metadata.color || null,
         material: form.metadata.material || null,
         style: form.metadata.style || null,
@@ -483,14 +492,6 @@ function App() {
       });
     } catch (err) { console.error('saveItemTemplate error:', err); }
   };
-
-  useEffect(() => {
-    if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    if (donorSearch.trim().length >= 2) {
-      searchTimeout.current = setTimeout(() => searchDonors(donorSearch), 300);
-    } else { setDonorResults([]); }
-    return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current); };
-  }, [donorSearch, searchDonors]);
 
   /* ════════════════════════════════════════════════
      INVENTORY FETCH (joined query)
@@ -970,13 +971,6 @@ function App() {
       }
       const primaryImageUrl = imageUrls.length > 0 ? imageUrls[0] : null;
 
-      // Assemble dimensions string from split fields
-      const meta = { ...toteItemForm.metadata };
-      if (meta.dim_w || meta.dim_d || meta.dim_h) {
-        const parts = [meta.dim_w, meta.dim_d, meta.dim_h].map(v => v ? `${v}"` : '?');
-        meta.dimensions = parts.join(' × ');
-      }
-
       // Insert item
       const { data: newItem, error: itemErr } = await supabase
         .from('donation_items')
@@ -988,7 +982,14 @@ function App() {
           category: toteItemForm.category || 'Clothing',
           agreement_type: toteItemForm.agreementType || 'donation',
           storage_location: toteItemForm.storageLocation.trim() || 'Tote Intake',
-          metadata: meta,
+          metadata: (() => {
+            const meta = { ...toteItemForm.metadata };
+            if (meta.dim_w || meta.dim_d || meta.dim_h) {
+              const parts = [meta.dim_w, meta.dim_d, meta.dim_h].map(v => v ? `${v}"` : '?');
+              meta.dimensions = parts.join(' × ');
+            }
+            return meta;
+          })(),
           item_image_url: primaryImageUrl,
           uploaded_by: session?.user?.id,
           status: 'in_storage',
@@ -1004,7 +1005,14 @@ function App() {
       }
 
       // Save as template if checked
-      if (saveAsTemplate) { await saveItemTemplate({ ...toteItemForm, metadata: meta }); setSaveAsTemplate(false); }
+      if (saveAsTemplate) {
+        const meta = { ...toteItemForm.metadata };
+        if (meta.dim_w || meta.dim_d || meta.dim_h) {
+          meta.dimensions = [meta.dim_w, meta.dim_d, meta.dim_h].map(v => v ? `${v}"` : '?').join(' × ');
+        }
+        await saveItemTemplate({ ...toteItemForm, metadata: meta });
+        setSaveAsTemplate(false);
+      }
 
       // Update totes state
       setTotes(prev => prev.map(t => t.id === toteId
@@ -1017,6 +1025,7 @@ function App() {
       setToteItemFiles([]);
       setToteItemPreviews([]);
       setToteAiStatus('idle');
+      setItemTemplates([]);
       setAddingToTote(null);
     } catch (err) { console.error('Save tote item error:', err); }
     finally { setSavingToteItem(false); }
@@ -1040,11 +1049,6 @@ function App() {
     if (!toteItemForm.agreementType) return;
     setSavingToteItem(true);
     try {
-      const updateMeta = { ...toteItemForm.metadata };
-      if (updateMeta.dim_w || updateMeta.dim_d || updateMeta.dim_h) {
-        const parts = [updateMeta.dim_w, updateMeta.dim_d, updateMeta.dim_h].map(v => v ? `${v}"` : '?');
-        updateMeta.dimensions = parts.join(' × ');
-      }
       const { error } = await supabase
         .from('donation_items')
         .update({
@@ -1052,13 +1056,13 @@ function App() {
           category: toteItemForm.category || 'Clothing',
           agreement_type: toteItemForm.agreementType,
           storage_location: toteItemForm.storageLocation.trim() || 'Tote Intake',
-          metadata: updateMeta,
+          metadata: toteItemForm.metadata,
         })
         .eq('id', editingToteItem.id);
       if (error) throw error;
       setTotes(prev => prev.map(t => t.id === toteId
         ? { ...t, items: (t.items || []).map(i => i.id === editingToteItem.id
-            ? { ...i, item_description: toteItemForm.itemDescription.trim(), category: toteItemForm.category || 'Clothing', agreement_type: toteItemForm.agreementType, storage_location: toteItemForm.storageLocation.trim() || 'Tote Intake', metadata: updateMeta }
+            ? { ...i, item_description: toteItemForm.itemDescription.trim(), category: toteItemForm.category || 'Clothing', agreement_type: toteItemForm.agreementType, storage_location: toteItemForm.storageLocation.trim() || 'Tote Intake', metadata: toteItemForm.metadata }
             : i)
           }
         : t
@@ -1424,12 +1428,6 @@ function App() {
         }
         // Set item_image_url to first image for backward compat / card thumbnail
         const primaryImageUrl = imageUrls.length > 0 ? imageUrls[0] : null;
-        // Assemble dimensions string from split fields
-        const itemMeta = { ...(item.metadata || {}) };
-        if (itemMeta.dim_w || itemMeta.dim_d || itemMeta.dim_h) {
-          const parts = [itemMeta.dim_w, itemMeta.dim_d, itemMeta.dim_h].map(v => v ? `${v}"` : '?');
-          itemMeta.dimensions = parts.join(' × ');
-        }
         const { data: insertedItem, error: itemError } = await supabase
           .from('donation_items')
           .insert([{
@@ -1438,7 +1436,14 @@ function App() {
             storage_location: item.storageLocation.trim(),
             item_image_url: primaryImageUrl,
             category: item.category || null,
-            metadata: Object.keys(itemMeta).length > 0 ? itemMeta : null,
+            metadata: (() => {
+              const itemMeta = { ...(item.metadata || {}) };
+              if (itemMeta.dim_w || itemMeta.dim_d || itemMeta.dim_h) {
+                const parts = [itemMeta.dim_w, itemMeta.dim_d, itemMeta.dim_h].map(v => v ? `${v}"` : '?');
+                itemMeta.dimensions = parts.join(' × ');
+              }
+              return Object.keys(itemMeta).length > 0 ? itemMeta : null;
+            })(),
             agreement_type: item.agreementType || null,
             uploaded_by: session?.user?.id || null,
           }])
@@ -1452,6 +1457,10 @@ function App() {
         }
         // Save as template if checked
         if (saveAsTemplate && item.category) {
+          const itemMeta = { ...(item.metadata || {}) };
+          if (itemMeta.dim_w || itemMeta.dim_d || itemMeta.dim_h) {
+            itemMeta.dimensions = [itemMeta.dim_w, itemMeta.dim_d, itemMeta.dim_h].map(v => v ? `${v}"` : '?').join(' × ');
+          }
           await saveItemTemplate({ ...item, metadata: itemMeta });
         }
       }
@@ -2054,7 +2063,7 @@ function App() {
                                     <div className="cr-field">
                                       <label>Category <span className="cr-req">*</span></label>
                                       <select value={toteItemForm.category || 'Clothing'}
-                                        onChange={e => { setToteItemForm(p => ({ ...p, category: e.target.value, metadata: {} })); setItemTemplates([]); }}>
+                                        onChange={e => setToteItemForm(p => ({ ...p, category: e.target.value, metadata: {} }))}>
                                         {['Bedding', 'Books', 'Clothing', 'Electronics', 'Furniture', 'Kitchen', 'Other'].map(c => (
                                           <option key={c}>{c}</option>
                                         ))}
@@ -2108,14 +2117,14 @@ function App() {
                                       </select>
                                     </div>
                                     <div className="cr-field">
-                                      <label>Size</label>
+                                      <label>Size <span style={{color:'#dc2626'}}>*</span></label>
                                       <select value={toteItemForm.metadata.size || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, size: e.target.value } }))}>
                                         <option value="">Select…</option>
                                         {CLOTHING_SIZES.map(v => <option key={v}>{v}</option>)}
                                       </select>
                                     </div>
                                     <div className="cr-field">
-                                      <label>Color</label>
+                                      <label>Color <span style={{color:'#dc2626'}}>*</span></label>
                                       <input type="text" placeholder="e.g. Navy Blue" value={toteItemForm.metadata.color || ''}
                                         onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
                                     </div>
@@ -2125,14 +2134,14 @@ function App() {
                                         onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, brand: e.target.value } }))} />
                                     </div>
                                     <div className="cr-field">
-                                      <label>Fabric / Material</label>
+                                      <label>Fabric / Material <span style={{color:'#dc2626'}}>*</span></label>
                                       <select value={toteItemForm.metadata.fabric || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, fabric: e.target.value } }))}>
                                         <option value="">Select…</option>
                                         {CLOTHING_FABRICS.map(v => <option key={v}>{v}</option>)}
                                       </select>
                                     </div>
                                     <div className="cr-field">
-                                      <label>Condition</label>
+                                      <label>Condition <span style={{color:'#dc2626'}}>*</span></label>
                                       <select value={toteItemForm.metadata.condition || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, condition: e.target.value } }))}>
                                         <option value="">Select…</option>
                                         {CLOTHING_CONDITIONS.map(v => <option key={v}>{v}</option>)}
@@ -2232,7 +2241,6 @@ function App() {
                                     </div>
 </>)}
                                   </div>
-                                  {/* Required field validation summary */}
                                   {(() => {
                                     const m = toteItemForm.metadata;
                                     const missing = [];
@@ -2254,18 +2262,16 @@ function App() {
                                   <div style={{ display: 'flex', gap: '.75rem', marginTop: '.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                                     {(() => {
                                       const m = toteItemForm.metadata;
-                                      const isFurniture = toteItemForm.category === 'Furniture';
-                                      const isClothing = toteItemForm.category === 'Clothing';
-                                      const furnitureMissing = isFurniture && (!m.subcategory || !m.color || !m.material || !m.condition);
-                                      const clothingMissing = isClothing && (!m.color || !m.fabric || !m.condition || !m.size);
-                                      const isDisabled = savingToteItem || !toteItemForm.itemDescription.trim() || !toteItemForm.agreementType || furnitureMissing || clothingMissing;
+                                      const furnitureMissing = toteItemForm.category === 'Furniture' && (!m.subcategory || !m.color || !m.material || !m.condition);
+                                      const clothingMissing = toteItemForm.category === 'Clothing' && (!m.color || !m.fabric || !m.condition || !m.size);
                                       return (
-                                        <button className="cr-btn-primary sm" onClick={() => editingToteItem ? updateToteItem(tote.id) : saveToteItem(tote.id)} disabled={isDisabled}>
+                                        <button className="cr-btn-primary sm" onClick={() => editingToteItem ? updateToteItem(tote.id) : saveToteItem(tote.id)}
+                                          disabled={savingToteItem || !toteItemForm.itemDescription.trim() || !toteItemForm.agreementType || furnitureMissing || clothingMissing}>
                                           {savingToteItem ? <><span className="cr-spinner"></span> Saving…</> : editingToteItem ? 'Update Item' : 'Save Item + Assign SKU'}
                                         </button>
                                       );
                                     })()}
-                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setEditingToteItem(null); setToteItemForm({ itemDescription: '', storageLocation: '', category: 'Clothing', agreementType: '', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); setSaveAsTemplate(false); setItemTemplates([]); }}>
+                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setEditingToteItem(null); setToteItemForm({ itemDescription: '', storageLocation: '', category: 'Clothing', agreementType: '', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); setSaveAsTemplate(false); }}>
                                       Cancel
                                     </button>
                                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', color: '#374151', cursor: 'pointer', marginLeft: 'auto' }}>
@@ -2711,20 +2717,17 @@ function App() {
                                       <label style={{ color: '#16a34a', fontSize: '0.8rem', marginBottom: 4 }}>📋 Use a saved template</label>
                                       <select defaultValue="" onChange={e => {
                                         const t = itemTemplates.find(t => t.id === e.target.value);
-                                        if (t) {
-                                          handleMetaChange(item._key, 'subcategory', t.subcategory || item.metadata.subcategory);
-                                          handleMetaChange(item._key, 'dim_w', t.dim_w != null ? String(t.dim_w) : item.metadata.dim_w);
-                                          handleMetaChange(item._key, 'dim_d', t.dim_d != null ? String(t.dim_d) : item.metadata.dim_d);
-                                          handleMetaChange(item._key, 'dim_h', t.dim_h != null ? String(t.dim_h) : item.metadata.dim_h);
-                                          handleMetaChange(item._key, 'color', t.color || item.metadata.color);
-                                          handleMetaChange(item._key, 'material', t.material || item.metadata.material);
-                                          handleMetaChange(item._key, 'style', t.style || item.metadata.style);
-                                          handleMetaChange(item._key, 'condition', t.condition || item.metadata.condition);
-                                          // Also update description at item level
-                                          if (t.description) {
-                                            setItems(prev => prev.map(i => i._key === item._key ? { ...i, item_description: t.description } : i));
-                                          }
-                                        }
+                                        if (t) applyItemTemplate(t, (updater) => {
+                                          const updated = updater({ ...item, itemDescription: item.item_description, metadata: item.metadata });
+                                          handleMetaChange(item._key, 'subcategory', updated.metadata.subcategory || item.metadata.subcategory);
+                                          handleMetaChange(item._key, 'dim_w', updated.metadata.dim_w || '');
+                                          handleMetaChange(item._key, 'dim_d', updated.metadata.dim_d || '');
+                                          handleMetaChange(item._key, 'dim_h', updated.metadata.dim_h || '');
+                                          handleMetaChange(item._key, 'color', updated.metadata.color || '');
+                                          handleMetaChange(item._key, 'material', updated.metadata.material || '');
+                                          handleMetaChange(item._key, 'style', updated.metadata.style || '');
+                                          handleMetaChange(item._key, 'condition', updated.metadata.condition || '');
+                                        });
                                       }}>
                                         <option value="">— Pick a template —</option>
                                         {itemTemplates.map(t => (
@@ -2754,13 +2757,6 @@ function App() {
                                       {FURNITURE_STYLES.map(v => <option key={v}>{v}</option>)}
                                     </select>
                                   </div>
-                                  <div className="cr-field">
-                                    <label>Condition</label>
-                                    <select value={item.metadata.condition || ''} onChange={e => handleMetaChange(item._key, 'condition', e.target.value)}>
-                                      <option value="">Select…</option>
-                                      {FURNITURE_CONDITIONS.map(v => <option key={v}>{v}</option>)}
-                                    </select>
-                                  </div>
                                   <div className="cr-field cr-span-2">
                                     <label>Dimensions (inches)</label>
                                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -2774,6 +2770,13 @@ function App() {
                                         onChange={e => handleMetaChange(item._key, 'dim_h', e.target.value)} />
                                       <span className="cr-hint" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>W × D × H</span>
                                     </div>
+                                  </div>
+                                  <div className="cr-field">
+                                    <label>Condition</label>
+                                    <select value={item.metadata.condition || ''} onChange={e => handleMetaChange(item._key, 'condition', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {FURNITURE_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
                                   </div>
                                   <div className="cr-field">
                                     <label>Weight (lbs) <span className="cr-hint">(for shipping rates)</span></label>
@@ -3051,7 +3054,7 @@ function App() {
                     </div>
                   )}
 
-                  <div className="cr-form-actions" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
+                  <div className="cr-form-actions" style={{ alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
                     <button type="button" className="cr-btn-secondary" onClick={resetDonationForm}>Cancel</button>
                     <button type="submit" className="cr-btn-primary" disabled={loading}>
                       {loading ? <><span className="cr-spinner"></span>Saving…</> : (
@@ -3059,9 +3062,9 @@ function App() {
                           ` (${donationItems.filter(i => i.itemDescription.trim()).length} items)`}</>
                       )}
                     </button>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', color: '#374151', cursor: 'pointer' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', color: '#374151', cursor: 'pointer', marginLeft: 'auto' }}>
                       <input type="checkbox" checked={saveAsTemplate} onChange={e => setSaveAsTemplate(e.target.checked)} style={{ accentColor: '#16a34a' }} />
-                      Save items as templates
+                      Save furniture items as templates
                     </label>
                   </div>
                 </>
@@ -4427,9 +4430,6 @@ function App() {
             )}
           </div>
 
-          {/* ── Reference Item Templates ── */}
-          <ReferenceTemplatesPanel supabase={supabase} />
-
           {/* ── Active Tote Requests with reassignment ── */}
           <div className="cr-users-list" style={{ marginTop: '1.5rem' }}>
             <div className="cr-users-list-header">
@@ -4521,6 +4521,8 @@ function App() {
             </div>
             <AmbassadorCommissions tab={tab} supabase={supabase} />
           </div>
+
+          <ReferenceTemplatesPanel supabase={supabase} />
         </main>
       )}
 
