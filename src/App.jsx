@@ -4548,7 +4548,7 @@ function App() {
             ) : (
               <table className="cr-agreements-table">
                 <thead>
-                  <tr><th>Name</th><th>Email</th><th>Commission %</th><th>Cal.com URL</th><th>Created</th><th>Actions</th></tr>
+                  <tr><th>Name</th><th>Email</th><th>Commission %</th><th>Cal.com Drop-Off URL</th><th>Cal.com Pick-Up URL</th><th>Created</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                   {ambassadors.filter(a => a.active).map(a => (
@@ -4586,6 +4586,19 @@ function App() {
                             const url = e.target.value.trim() || null;
                             await supabase.from('ambassador_profiles').update({ calcom_url: url }).eq('id', a.id);
                             setAmbassadors(prev => prev.map(x => x.id === a.id ? { ...x, calcom_url: url } : x));
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="url"
+                          placeholder="https://cal.com/…"
+                          defaultValue={a.calcom_pickup_url || ''}
+                          style={{ width: 200, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: '.8rem' }}
+                          onBlur={async e => {
+                            const url = e.target.value.trim() || null;
+                            await supabase.from('ambassador_profiles').update({ calcom_pickup_url: url }).eq('id', a.id);
+                            setAmbassadors(prev => prev.map(x => x.id === a.id ? { ...x, calcom_pickup_url: url } : x));
                           }}
                         />
                       </td>

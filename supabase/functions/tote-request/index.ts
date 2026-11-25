@@ -3,12 +3,11 @@
 //
 // Actions:
 //   (none)                   → new tote request: create donor, assign ambassador, send Emails 1 + admin + ambassador
-//   send_delivery_reminder   → Email 2: tote just delivered
-//   send_pickup_schedule     → Email 3: pickup day/time window (ambassador enters)
-//   send_pickup_confirmation → Email 5 (donation) or 6 (consignment): tote was picked up
-//
-// Stage 5: Student confirmation email (Email 1) now includes a "Book your pickup time →"
-//          button linking to the assigned ambassador's Cal.com URL (if set).
+//   send_delivery_reminder   → Email 2: tote just delivered; stamps tote_delivered_at for drip tracking
+//   send_pickup_schedule     → legacy Email 3: pickup day/time window (ambassador enters)
+//   send_pickup_confirmation → Email 4 (donation) or 5 (consignment): tote was picked up
+//   send_pickup_reminders    → Email 3 (batch): 2-hour-before-pickup reminder; called by pg_cron every 15 min
+//   send_followup_nudges     → Nudge emails at day 3/7/14 for un-scheduled totes; called by pg_cron daily
 //
 // Deploy: supabase functions deploy tote-request --no-verify-jwt --project-ref vkfzeojkxfuehgtwysrn
 
@@ -76,7 +75,7 @@ serve(async (req) => {
       let calcomButton = '';
       const { data: toteReq } = await supabase
         .from('tote_requests')
-        .select('assigned_to')
+        .select('id, assigned_to')
         .ilike('student_email', email.trim())
         .in('status', ['tote_out', 'pending'])
         .order('created_at', { ascending: false })
@@ -86,11 +85,11 @@ serve(async (req) => {
       if (toteReq?.assigned_to) {
         const { data: amb } = await supabase
           .from('ambassador_profiles')
-          .select('calcom_url')
+          .select('calcom_url, calcom_pickup_url')
           .eq('id', toteReq.assigned_to)
           .maybeSingle();
 
-        const rawUrl = amb?.calcom_url || null;
+        const rawUrl = amb?.calcom_pickup_url || amb?.calcom_url || null;
         if (rawUrl) {
           try {
             const bookingUrl = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
@@ -119,15 +118,28 @@ serve(async (req) => {
         }
       }
 
+      // Stamp tote_delivered_at so the drip nudge jobs can track elapsed time
+      if (toteReq?.id) {
+        await supabase.from('tote_requests').update({ tote_delivered_at: new Date().toISOString() }).eq('id', toteReq.id);
+      }
+
       if (resendKey) {
         const firstName = name.split(' ')[0];
         await sendEmail(resendKey, email, "Reclaim Tote Delivery",
           emailWrap(`
             <p>Hi ${firstName},</p>
-            <p>Your Reclaim Tote was just delivered to the address you provided. Please fill the tote and complete the agreement, if you haven't already, using this link: <a href="${AGREEMENT_URL}" style="color: #1a3c34;">${AGREEMENT_URL}</a>.</p>
-            <p>Once your tote is filled and ready, use the link below to schedule a pickup time with your Campus Reclaimed ambassador.</p>
+            <p>We hope you're enjoying your Reclaim Tote! Once you've gathered the items you'd like to donate or sell on consignment, it's time to schedule your pick-up.</p>
+            <p><strong>What goes in your Tote?</strong></p>
+            <ul style="margin: 8px 0 16px 0; padding-left: 24px;">
+              <li style="margin-bottom: 8px;">Please place smaller items, such as clothing and small decor, inside your Reclaim Tote.</li>
+              <li style="margin-bottom: 8px;">Larger items, such as headboards, ottomans, and nightstands, are also accepted! Please bring these items outside your residence hall to meet our team at your scheduled pick-up time.</li>
+            </ul>
+            <p>For more information about what we accept, please visit our <a href="https://www.campusreclaimed.com/pages/sell" style="color: #1a3c34;">Sell Your Items page</a>.</p>
+            <p><strong>Schedule Your Tote Pick-Up:</strong></p>
             ${calcomButton}
-            <p>Please let us know if you have any questions. Thank you again for choosing Campus Reclaimed.</p>
+            <p>Please use the calendar link above to select a date and time that works best for you. Our team will meet you outside your residence hall to collect your filled Tote and any larger items. The meeting should only take a couple of minutes!</p>
+            <p>If you haven't already, please complete our Participation Agreement here: <a href="${AGREEMENT_URL}" style="color: #1a3c34;">${AGREEMENT_URL}</a>. The agreement explains the difference between donating your items and selling them on consignment.</p>
+            <p>Thank you again for choosing Campus Reclaimed and helping give college items a second life. It means more when it's reclaimed!</p>
             <p>Best,<br>The Campus Reclaimed Team</p>
           `)
         );
@@ -155,8 +167,8 @@ serve(async (req) => {
         await sendEmail(resendKey, request.student_email, "Reclaim Tote Pick-Up",
           emailWrap(`
             <p>Hi ${firstName},</p>
-            <p>Please place your Reclaim Tote outside your door, and our team will pick it up tomorrow, ${pickup_window}.</p>
-            <p>Kindly reply to this email to confirm that your tote will be outside during that window.</p>
+            <p>This is a reminder that your Reclaim Tote pick-up is scheduled for tomorrow, ${pickup_window}. Our team member will meet you outside your residence hall to collect your filled Tote and any larger items you'd like to donate or sell.</p>
+            <p>Kindly reply to this email to confirm that you'll be available during that window.</p>
             <p>Thank you for choosing Campus Reclaimed. Let us know if you have any questions.</p>
             <p>Best,<br>The Campus Reclaimed Team</p>
           `)
@@ -227,6 +239,256 @@ serve(async (req) => {
     }
 
     // ════════════════════════════════════════════════════════
+    // ACTION: send_pickup_reminders  (Email 3 — batch)
+    // Called by pg_cron every 15 min — sends 2-hour-before reminder
+    // ════════════════════════════════════════════════════════
+    if (action === 'send_pickup_reminders') {
+      const now = new Date();
+      const windowStart = new Date(now.getTime() + (2 * 60 - 15) * 60 * 1000).toISOString();
+      const windowEnd   = new Date(now.getTime() + (2 * 60 + 15) * 60 * 1000).toISOString();
+
+      const { data: eligible } = await supabase
+        .from('tote_requests')
+        .select('id, student_name, student_email, scheduled_at, assigned_to')
+        .eq('status', 'scheduled')
+        .eq('reminder_2hr_sent', false)
+        .gte('scheduled_at', windowStart)
+        .lte('scheduled_at', windowEnd);
+
+      let sent = 0;
+      for (const req of eligible || []) {
+        // Get ambassador name
+        let ambFirstName = 'your Campus Reclaimed team member';
+        if (req.assigned_to) {
+          const { data: amb } = await supabase.from('ambassador_profiles').select('full_name').eq('id', req.assigned_to).maybeSingle();
+          if (amb?.full_name) ambFirstName = amb.full_name.split(' ')[0];
+        }
+
+        if (resendKey) {
+          const firstName = req.student_name.split(' ')[0];
+          await sendEmail(resendKey, req.student_email, "Reminder: Your Tote Pickup Is Today",
+            emailWrap(`
+              <p>Hi ${firstName},</p>
+              <p>This is a friendly reminder that your Reclaim Tote pick-up is scheduled in approximately 2 hours!</p>
+              <p>Your team member, <strong>${ambFirstName}</strong>, will meet you outside your residence hall at your scheduled time to collect your filled Tote and any larger items you'd like to donate or sell.</p>
+              <p>Please make sure your Tote is filled and that any additional items are ready to bring outside when you meet our team.</p>
+              <p>If you need to reschedule, please reply to this email as soon as possible so we can find another time that works for you.</p>
+              <p>Thank you again for choosing Campus Reclaimed!</p>
+              <p>Best,<br>The Campus Reclaimed Team</p>
+            `)
+          );
+        }
+
+        await supabase.from('tote_requests').update({ reminder_2hr_sent: true }).eq('id', req.id);
+        sent++;
+      }
+
+      return json({ success: true, sent });
+    }
+
+    // ════════════════════════════════════════════════════════
+    // ACTION: send_followup_nudges  (Nudge emails — batch)
+    // Called by pg_cron daily — sends nudge at day 3, 7, 14
+    // after tote delivery if student hasn't scheduled yet
+    // ════════════════════════════════════════════════════════
+    if (action === 'send_followup_nudges') {
+      const now = new Date();
+      const day3  = new Date(now.getTime() - 3  * 24 * 60 * 60 * 1000).toISOString();
+      const day7  = new Date(now.getTime() - 7  * 24 * 60 * 60 * 1000).toISOString();
+      const day14 = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+      // All totes delivered but not yet scheduled, with <3 nudges sent
+      const { data: eligible } = await supabase
+        .from('tote_requests')
+        .select('id, student_name, student_email, tote_delivered_at, followup_count, assigned_to')
+        .eq('status', 'tote_out')
+        .is('scheduled_at', null)
+        .not('tote_delivered_at', 'is', null)
+        .lt('followup_count', 3);
+
+      // Helper: build a Cal.com pickup button for a given ambassador id + student
+      async function buildNudgeButton(assignedTo: string | null, studentName: string, studentEmail: string): Promise<string> {
+        if (!assignedTo) return '';
+        const { data: amb } = await supabase.from('ambassador_profiles').select('calcom_url, calcom_pickup_url').eq('id', assignedTo).maybeSingle();
+        const rawUrl = amb?.calcom_pickup_url || amb?.calcom_url || null;
+        if (!rawUrl) return '';
+        try {
+          const bookingUrl = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
+          bookingUrl.searchParams.set('name', studentName.trim());
+          bookingUrl.searchParams.set('email', studentEmail.trim());
+          return `<p style="margin-top: 20px;">
+            <a href="${bookingUrl.toString()}"
+               style="display: inline-block; background: #1a3c34; color: #fff; text-decoration: none;
+                      padding: 12px 24px; border-radius: 8px; font-size: 15px; font-weight: 500;">
+              Schedule Your Tote Pick-Up →
+            </a>
+          </p>`;
+        } catch { return rawUrl ? `<p style="margin-top:20px;"><a href="${rawUrl}" style="display:inline-block;background:#1a3c34;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;">Schedule Your Tote Pick-Up →</a></p>` : ''; }
+      }
+
+      let sent = 0;
+      for (const req of eligible || []) {
+        const deliveredAt = new Date(req.tote_delivered_at);
+        const count = req.followup_count ?? 0;
+
+        // Determine which nudge to send based on days elapsed
+        let nudgeNum = 0;
+        if      (count === 0 && deliveredAt <= new Date(day3))  nudgeNum = 1;
+        else if (count === 1 && deliveredAt <= new Date(day7))  nudgeNum = 2;
+        else if (count === 2 && deliveredAt <= new Date(day14)) nudgeNum = 3;
+        if (nudgeNum === 0) continue;
+
+        const firstName = req.student_name.split(' ')[0];
+        const calcomBtn = await buildNudgeButton(req.assigned_to, req.student_name, req.student_email);
+
+        if (resendKey) {
+          if (nudgeNum === 1) {
+            await sendEmail(resendKey, req.student_email, "Don't forget — Schedule Your Reclaim Tote Pick-Up",
+              emailWrap(`
+                <p>Hi ${firstName},</p>
+                <p>Just a friendly reminder that your Reclaim Tote is waiting to be picked up! Once you've filled it with the items you'd like to donate or sell, use the link below to schedule a convenient pick-up time.</p>
+                ${calcomBtn}
+                <p>It only takes a couple of minutes — our ambassador will meet you outside your residence hall.</p>
+                <p>Thank you for choosing Campus Reclaimed. It means more when it's reclaimed!</p>
+                <p>Best,<br>The Campus Reclaimed Team</p>
+              `)
+            );
+          } else if (nudgeNum === 2) {
+            await sendEmail(resendKey, req.student_email, "Your Reclaim Tote is still waiting for you!",
+              emailWrap(`
+                <p>Hi ${firstName},</p>
+                <p>We noticed you haven't scheduled your Reclaim Tote pick-up yet — no worries, there's still time!</p>
+                <p>Your filled Tote (and any larger items you'd like to donate or sell) are just a quick pick-up away from finding a second life on campus.</p>
+                ${calcomBtn}
+                <p>Questions? Just reply to this email and we'll help.</p>
+                <p>Best,<br>The Campus Reclaimed Team</p>
+              `)
+            );
+          } else {
+            await sendEmail(resendKey, req.student_email, "Last reminder — Your Reclaim Tote Pick-Up",
+              emailWrap(`
+                <p>Hi ${firstName},</p>
+                <p>This is our final reminder about your Reclaim Tote pick-up. We'd love to collect your items and help give them a second life — but we don't want to keep nudging you if the timing isn't right.</p>
+                <p>If you're still interested, please use the link below to schedule a pick-up. If you'd prefer to opt out, simply reply to this email and let us know.</p>
+                ${calcomBtn}
+                <p>Thank you for supporting Campus Reclaimed!</p>
+                <p>Best,<br>The Campus Reclaimed Team</p>
+              `)
+            );
+          }
+        }
+
+        await supabase.from('tote_requests').update({
+          followup_count: count + 1,
+          last_followup_at: now.toISOString(),
+        }).eq('id', req.id);
+        sent++;
+      }
+
+      return json({ success: true, sent });
+    }
+
+    // ════════════════════════════════════════════════════════
+    // ACTION: send_dropoff_nudges  (Drop-off nudge emails — batch)
+    // Called by pg_cron daily — sends nudge at day 3, 7, 14
+    // after tote request if student hasn't booked drop-off yet
+    // ════════════════════════════════════════════════════════
+    if (action === 'send_dropoff_nudges') {
+      const now = new Date();
+      const day3  = new Date(now.getTime() - 3  * 24 * 60 * 60 * 1000).toISOString();
+      const day7  = new Date(now.getTime() - 7  * 24 * 60 * 60 * 1000).toISOString();
+      const day14 = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+      // All pending totes with no drop-off booked yet, with <3 nudges sent
+      const { data: eligible } = await supabase
+        .from('tote_requests')
+        .select('id, student_name, student_email, created_at, dropoff_followup_count, assigned_to')
+        .eq('status', 'pending')
+        .is('calcom_booking_uid', null)
+        .lt('dropoff_followup_count', 3);
+
+      // Helper: build a Cal.com drop-off button for a given ambassador id + student
+      async function buildDropoffButton(assignedTo: string | null, studentName: string, studentEmail: string): Promise<string> {
+        if (!assignedTo) return '';
+        const { data: amb } = await supabase.from('ambassador_profiles').select('calcom_url').eq('id', assignedTo).maybeSingle();
+        const rawUrl = amb?.calcom_url || null;
+        if (!rawUrl) return '';
+        try {
+          const bookingUrl = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
+          bookingUrl.searchParams.set('name', studentName.trim());
+          bookingUrl.searchParams.set('email', studentEmail.trim());
+          return `<p style="margin-top: 20px;">
+            <a href="${bookingUrl.toString()}"
+               style="display: inline-block; background: #1a3c34; color: #fff; text-decoration: none;
+                      padding: 12px 24px; border-radius: 8px; font-size: 15px; font-weight: 500;">
+              Schedule Your Tote Drop-Off →
+            </a>
+          </p>`;
+        } catch { return rawUrl ? `<p style="margin-top:20px;"><a href="${rawUrl}" style="display:inline-block;background:#1a3c34;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;">Schedule Your Tote Drop-Off →</a></p>` : ''; }
+      }
+
+      let sent = 0;
+      for (const req of eligible || []) {
+        const createdAt = new Date(req.created_at);
+        const count = req.dropoff_followup_count ?? 0;
+
+        let nudgeNum = 0;
+        if      (count === 0 && createdAt <= new Date(day3))  nudgeNum = 1;
+        else if (count === 1 && createdAt <= new Date(day7))  nudgeNum = 2;
+        else if (count === 2 && createdAt <= new Date(day14)) nudgeNum = 3;
+        if (nudgeNum === 0) continue;
+
+        const firstName = req.student_name.split(' ')[0];
+        const calcomBtn = await buildDropoffButton(req.assigned_to, req.student_name, req.student_email);
+
+        if (resendKey) {
+          if (nudgeNum === 1) {
+            await sendEmail(resendKey, req.student_email, "Don't forget — Schedule Your Reclaim Tote Drop-Off",
+              emailWrap(`
+                <p>Hi ${firstName},</p>
+                <p>Just a friendly reminder that your Reclaim Tote is ready to be delivered! Use the link below to schedule a convenient drop-off time and we'll bring it right to your residence hall.</p>
+                ${calcomBtn}
+                <p>It only takes a couple of minutes — our ambassador will meet you outside your door.</p>
+                <p>Thank you for choosing Campus Reclaimed. It means more when it's reclaimed!</p>
+                <p>Best,<br>The Campus Reclaimed Team</p>
+              `)
+            );
+          } else if (nudgeNum === 2) {
+            await sendEmail(resendKey, req.student_email, "Your Reclaim Tote is waiting to be delivered!",
+              emailWrap(`
+                <p>Hi ${firstName},</p>
+                <p>We noticed you haven't scheduled your Reclaim Tote drop-off yet — no worries, there's still time!</p>
+                <p>Use the link below to pick a time and we'll deliver your tote right to your residence hall.</p>
+                ${calcomBtn}
+                <p>Questions? Just reply to this email and we'll help.</p>
+                <p>Best,<br>The Campus Reclaimed Team</p>
+              `)
+            );
+          } else {
+            await sendEmail(resendKey, req.student_email, "Last reminder — Your Reclaim Tote Drop-Off",
+              emailWrap(`
+                <p>Hi ${firstName},</p>
+                <p>This is our final reminder about your Reclaim Tote drop-off. We'd love to get your tote to you — but we don't want to keep nudging you if the timing isn't right.</p>
+                <p>If you're still interested, please use the link below to schedule a drop-off. If you'd prefer to cancel, simply reply to this email and let us know.</p>
+                ${calcomBtn}
+                <p>Thank you for supporting Campus Reclaimed!</p>
+                <p>Best,<br>The Campus Reclaimed Team</p>
+              `)
+            );
+          }
+        }
+
+        await supabase.from('tote_requests').update({
+          dropoff_followup_count: count + 1,
+          last_followup_at: now.toISOString(),
+        }).eq('id', req.id);
+        sent++;
+      }
+
+      return json({ success: true, sent });
+    }
+
+    // ════════════════════════════════════════════════════════
     // DEFAULT: new tote request  (Email 1 + admin + ambassador)
     // ════════════════════════════════════════════════════════
     const { name, email, phone, address, venmo, item_types } = body;
@@ -274,19 +536,35 @@ serve(async (req) => {
     if (allAmbs && allAmbs.length > 0) {
       const { data: openRequests } = await supabase
         .from("tote_requests")
-        .select("assigned_to")
+        .select("assigned_to, requested_at")
         .in("status", ["pending", "in_progress"])
         .in("assigned_to", allAmbs.map(a => a.id));
 
       const loadMap: Record<string, number> = {};
+      const lastRequestMap: Record<string, string> = {};
       allAmbs.forEach(a => { loadMap[a.id] = 0; });
       (openRequests || []).forEach(r => {
-        if (r.assigned_to && loadMap[r.assigned_to] !== undefined) loadMap[r.assigned_to]++;
+        if (r.assigned_to && loadMap[r.assigned_to] !== undefined) {
+          loadMap[r.assigned_to]++;
+          // Track the most recent open-request timestamp per ambassador
+          if (!lastRequestMap[r.assigned_to] || r.requested_at > lastRequestMap[r.assigned_to]) {
+            lastRequestMap[r.assigned_to] = r.requested_at;
+          }
+        }
       });
 
-      const leastLoaded = allAmbs.reduce((best, amb) =>
-        (loadMap[amb.id] ?? 0) < (loadMap[best.id] ?? 0) ? amb : best
-      );
+      // On a load tie, prefer the ambassador whose most recent open request is oldest
+      // (i.e., who has been waiting longest for a new assignment)
+      const leastLoaded = allAmbs.reduce((best, amb) => {
+        const ambLoad = loadMap[amb.id] ?? 0;
+        const bestLoad = loadMap[best.id] ?? 0;
+        if (ambLoad < bestLoad) return amb;
+        if (ambLoad > bestLoad) return best;
+        // Tie-break: oldest most-recent-request timestamp wins (no request at all beats any timestamp)
+        const ambLast = lastRequestMap[amb.id] ?? '';
+        const bestLast = lastRequestMap[best.id] ?? '';
+        return ambLast < bestLast ? amb : best;
+      });
 
       assignedTo    = leastLoaded.id;
       ambName       = leastLoaded.full_name;
@@ -351,10 +629,11 @@ serve(async (req) => {
       await sendEmail(resendKey, email.trim(), "Campus Reclaimed – Reclaim Tote Request",
         emailWrap(`
           <p>Hi ${firstName},</p>
-          <p>Thank you for your support of Campus Reclaimed and requesting a Reclaim Tote.</p>
-          <p>Your Reclaim Tote will be delivered in the next 24-48 hours to the address you provided. Please fill out our agreement: <a href="${AGREEMENT_URL}" style="color: #1a3c34;">${AGREEMENT_URL}</a>. These instructions indicate whether you are selling items on consignment or donating them.</p>
+          <p>Thank you for your support of Campus Reclaimed and requesting a Reclaim Tote. We're excited to help give your college items a second life. The next step is to schedule your Tote drop-off!</p>
+          <p>Please use the calendar link below to select a date and time that works best for you. We will meet you outside your residence hall to drop off your Tote. The meeting should only take a couple of minutes!</p>
           ${dropoffCalcomButton}
-          <p>Once your tote is filled, you will receive a separate email with a link to schedule a convenient pickup time.</p>
+          <p>A few days after your Tote is delivered, you will receive another email with instructions for filling it and scheduling your Tote pick-up. We will also meet you outside your residence hall for pick-up.</p>
+          <p>Please don't forget to complete our Participation Agreement here: <a href="${AGREEMENT_URL}" style="color: #1a3c34;">${AGREEMENT_URL}</a>. These instructions indicate whether you are selling items on consignment or donating them.</p>
           <p>Thank you again for choosing Campus Reclaimed. It means more when it is reclaimed!</p>
           <p>Best,<br>The Campus Reclaimed Team</p>
         `)
