@@ -495,7 +495,7 @@ function App() {
         color: template.color || p.metadata.color,
         material: template.material || p.metadata.material,
         style: template.style || p.metadata.style,
-        condition: template.condition || p.metadata.condition,
+        // condition and storage_location intentionally excluded — user must set these fresh each time
       }
     }));
   };

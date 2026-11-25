@@ -220,7 +220,15 @@ serve(async (req) => {
         product_type: item.category || "Donated Item",
         tags: buildTags(item).join(', '),
         metafields: buildMetafields(item),
-        variants: [{ price: price.toString(), inventory_quantity: 1, inventory_management: "shopify", requires_shipping: item.metadata?.shipping !== 'pickup' }],
+        variants: [{
+          price: price.toString(),
+          compare_at_price: (body.retail_price != null && parseFloat(body.retail_price) > parseFloat(price))
+            ? body.retail_price.toString()
+            : null,
+          inventory_quantity: 1,
+          inventory_management: "shopify",
+          requires_shipping: item.metadata?.shipping !== 'pickup',
+        }],
         ...(images.length > 0 ? { images } : {}),
       },
     };
