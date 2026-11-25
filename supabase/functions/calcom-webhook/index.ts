@@ -12,7 +12,7 @@
 //   ?token=<CALCOM_WEBHOOK_TOKEN>
 //
 // The webhook was registered pointing to:
-//   https://vkfzeojkxfuehgtwысrn.supabase.co/functions/v1/calcom-webhook?token=<token>
+//   https://vkfzeojkxfuehgtwysrn.supabase.co/functions/v1/calcom-webhook?token=<token>
 //
 // Deploy: supabase functions deploy calcom-webhook --no-verify-jwt --project-ref vkfzeojkxfuehgtwysrn
 
@@ -88,9 +88,8 @@ serve(async (req) => {
     const { triggerEvent, payload: booking } = payload;
 
     console.log(`Cal.com webhook: ${triggerEvent} | booking uid: ${booking?.uid}`);
-    console.log(`Cal.com payload: ${JSON.stringify(payload).slice(0, 2000)}`);
 
-    // ── BOOKING_CREATED: a student booked a pickup time ──
+    // ── BOOKING_CREATED: a student booked a drop-off or pick-up time ──
     if (triggerEvent === "BOOKING_CREATED") {
       const bookingUid  = booking?.uid;
       const eventUri    = booking?.eventTypeId?.toString() || booking?.eventType?.id?.toString() || null;
@@ -105,10 +104,10 @@ serve(async (req) => {
         return json({ error: "Missing required booking fields" }, 400);
       }
 
-      // Find the tote request by student email (most recent pending/in_progress one)
+      // Find the tote request by student email (most recent pending or tote_out)
       const { data: toteRequest, error: findErr } = await supabase
         .from("tote_requests")
-        .select("id, student_name, student_email, assigned_to")
+        .select("id, student_name, student_email, assigned_to, status")
         .ilike("student_email", attendeeEmail)
         .in("status", ["pending", "tote_out"])
         .order("created_at", { ascending: false })
@@ -121,7 +120,6 @@ serve(async (req) => {
       }
 
       if (!toteRequest) {
-        // No matching open request — log and acknowledge (don't fail so Cal.com doesn't retry)
         console.log(`No open tote request found for ${attendeeEmail} — ignoring BOOKING_CREATED`);
         return json({ success: true, action: "no_match" });
       }
@@ -130,10 +128,11 @@ serve(async (req) => {
       const { error: updateErr } = await supabase
         .from("tote_requests")
         .update({
-          status:              "scheduled",
-          scheduled_at:        startTime || new Date().toISOString(),
-          calcom_booking_uid:  bookingUid,
-          calcom_event_uri:    eventUri,
+          status:               "scheduled",
+          scheduled_at:         startTime || new Date().toISOString(),
+          pickup_scheduled_at:  startTime || new Date().toISOString(),
+          calcom_booking_uid:   bookingUid,
+          calcom_event_uri:     eventUri,
         })
         .eq("id", toteRequest.id);
 
@@ -144,20 +143,21 @@ serve(async (req) => {
 
       console.log(`Tote request ${toteRequest.id} → scheduled (booking: ${bookingUid})`);
 
-      // Email student confirmation
+      // Email student drop-off confirmation
       if (resendKey && toteRequest.student_email) {
-        const firstName     = (attendeeName || toteRequest.student_name || 'there').split(' ')[0];
-        const pickupDisplay = startTime ? formatPickupTime(startTime) : 'your scheduled time';
+        const firstName      = (attendeeName || toteRequest.student_name || 'there').split(' ')[0];
+        const dropoffDisplay = startTime ? formatPickupTime(startTime) : 'your scheduled time';
 
         await sendEmail(
           resendKey,
           toteRequest.student_email,
-          "Tote Pickup Confirmed — Campus Reclaimed",
+          "Tote Drop-off Confirmed — Campus Reclaimed",
           emailWrap(`
             <p>Hi ${firstName},</p>
-            <p>Your Reclaim Tote pickup has been confirmed for <strong>${pickupDisplay}</strong>.</p>
-            <p>Please make sure your filled tote is outside your door at that time. Our ambassador will collect it during the scheduled window.</p>
-            <p>If you need to reschedule or cancel, you can do so through the booking confirmation link that Cal.com sent to your email.</p>
+            <p>Your Reclaim Tote drop-off has been confirmed for <strong>${dropoffDisplay}</strong>.</p>
+            <p>Our ambassador will meet you outside your residence hall at that time to deliver your tote.</p>
+            <p>After this, you'll receive another email with instructions for filling it and scheduling your pick-up.</p>
+            <p>If you need to cancel or reschedule, please reply to this email or contact us directly at <a href="mailto:info@campusreclaimed.com">info@campusreclaimed.com</a> and we'll take care of it for you.</p>
             <p>Thank you for choosing Campus Reclaimed!</p>
             <p>Best,<br>The Campus Reclaimed Team</p>
           `)
@@ -167,7 +167,7 @@ serve(async (req) => {
       return json({ success: true, action: "scheduled", tote_request_id: toteRequest.id });
     }
 
-    // ── BOOKING_CANCELLED: student cancelled their pickup booking ──
+    // ── BOOKING_CANCELLED: student cancelled their booking ──
     if (triggerEvent === "BOOKING_CANCELLED") {
       const bookingUid    = booking?.uid;
       const attendeeEmail = booking?.responses?.email?.value ||
@@ -181,11 +181,11 @@ serve(async (req) => {
       }
 
       // Find by booking UID first, then fall back to email
-      let toteRequest: { id: string; student_name: string; student_email: string } | null = null;
+      let toteRequest: { id: string; student_name: string; student_email: string; assigned_to: string | null; tote_delivered_at: string | null } | null = null;
 
       const { data: byUid } = await supabase
         .from("tote_requests")
-        .select("id, student_name, student_email")
+        .select("id, student_name, student_email, assigned_to, tote_delivered_at")
         .eq("calcom_booking_uid", bookingUid)
         .maybeSingle();
 
@@ -194,7 +194,7 @@ serve(async (req) => {
       } else if (attendeeEmail) {
         const { data: byEmail } = await supabase
           .from("tote_requests")
-          .select("id, student_name, student_email")
+          .select("id, student_name, student_email, assigned_to, tote_delivered_at")
           .ilike("student_email", attendeeEmail)
           .eq("status", "scheduled")
           .order("created_at", { ascending: false })
@@ -208,11 +208,17 @@ serve(async (req) => {
         return json({ success: true, action: "no_match" });
       }
 
-      // Revert to pending, clear scheduling fields
+      // Determine if this was a drop-off or pick-up cancellation
+      // tote_delivered_at is set once the tote has been physically delivered → pick-up booking
+      // tote_delivered_at is null → drop-off booking
+      const isPickupCancellation = !!toteRequest.tote_delivered_at;
+      const revertStatus = isPickupCancellation ? "tote_out" : "pending";
+
+      // Revert to correct prior status, clear scheduling fields
       const { error: revertErr } = await supabase
         .from("tote_requests")
         .update({
-          status:             "pending",
+          status:             revertStatus,
           scheduled_at:       null,
           calcom_booking_uid: null,
           calcom_event_uri:   null,
@@ -224,7 +230,45 @@ serve(async (req) => {
         return json({ error: "Revert failed" }, 500);
       }
 
-      console.log(`Tote request ${toteRequest.id} → reverted to pending (booking ${bookingUid} cancelled)`);
+      console.log(`Tote request ${toteRequest.id} → reverted to ${revertStatus} (booking ${bookingUid} cancelled; isPickup: ${isPickupCancellation})`);
+
+      // Build reschedule button using ambassador's Cal.com URL
+      const rescheduleLabel = isPickupCancellation ? "Reschedule Your Tote Pick-Up" : "Reschedule Your Tote Drop-Off";
+      let rescheduleBtn = '';
+      if (toteRequest.assigned_to) {
+        const { data: amb } = await supabase
+          .from('ambassador_profiles')
+          .select('calcom_url')
+          .eq('id', toteRequest.assigned_to)
+          .maybeSingle();
+        const rawUrl = amb?.calcom_url || null;
+        if (rawUrl) {
+          try {
+            const bookingUrl = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
+            const studentName  = attendeeName || toteRequest.student_name || '';
+            const studentEmail = attendeeEmail || toteRequest.student_email || '';
+            if (studentName)  bookingUrl.searchParams.set('name', studentName.trim());
+            if (studentEmail) bookingUrl.searchParams.set('email', studentEmail.trim());
+            rescheduleBtn = `<p style="margin-top: 20px;">
+              <a href="${bookingUrl.toString()}"
+                 style="display: inline-block; background: #1a3c34; color: #fff; text-decoration: none;
+                        padding: 12px 24px; border-radius: 8px; font-size: 15px; font-weight: 500;">
+                ${rescheduleLabel} →
+              </a>
+            </p>`;
+          } catch {
+            rescheduleBtn = rawUrl
+              ? `<p style="margin-top:20px;"><a href="${rawUrl}" style="display:inline-block;background:#1a3c34;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;">${rescheduleLabel} →</a></p>`
+              : '';
+          }
+        }
+      }
+
+      // Email subject and body vary by cancellation type
+      const cancelSubject = isPickupCancellation
+        ? "Tote Pick-Up Cancelled — Please Reschedule"
+        : "Tote Drop-off Cancelled — Please Reschedule";
+      const cancelledWhat = isPickupCancellation ? "pick-up" : "drop-off";
 
       // Email student that they need to reschedule
       if (resendKey && toteRequest.student_email) {
@@ -233,10 +277,11 @@ serve(async (req) => {
         await sendEmail(
           resendKey,
           toteRequest.student_email,
-          "Tote Pickup Cancelled — Please Reschedule",
+          cancelSubject,
           emailWrap(`
             <p>Hi ${firstName},</p>
-            <p>Your Reclaim Tote pickup has been cancelled. No worries — you can reschedule at any time by contacting your Campus Reclaimed ambassador.</p>
+            <p>Your Reclaim Tote ${cancelledWhat} has been cancelled. No worries — you can reschedule at any time using the button below.</p>
+            ${rescheduleBtn}
             <p>If you have any questions, please reply to this email and we'll be happy to help.</p>
             <p>Thank you for choosing Campus Reclaimed!</p>
             <p>Best,<br>The Campus Reclaimed Team</p>
@@ -244,7 +289,7 @@ serve(async (req) => {
         );
       }
 
-      return json({ success: true, action: "reverted_to_pending", tote_request_id: toteRequest.id });
+      return json({ success: true, action: `reverted_to_${revertStatus}`, tote_request_id: toteRequest.id });
     }
 
     // Any other trigger — acknowledge and ignore

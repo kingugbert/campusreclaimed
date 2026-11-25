@@ -83,11 +83,10 @@ export default function ToteRequestPage() {
           <div style={s.checkmark}>✅</div>
           <h2 style={s.sxTitle}>Tote request received!</h2>
           <p style={s.sxText}>
-            Thanks! An ambassador will drop off your tote within <strong>24–48 hours</strong>.
-            You'll also get a confirmation email with all the details.
+            Thanks! Please check your email now to schedule your Reclaim Tote Drop-Off Time.
           </p>
           <p style={{ ...s.sxText, marginBottom: 24 }}>
-            In the meantime, please sign your <strong>Participation Agreement</strong> — 
+            In the meantime, please sign your <strong>Participation Agreement</strong> —
             this is required before we can process your items.
           </p>
           <a href="https://92mauwn4py.us-east-1.awsapprunner.com/agreement"

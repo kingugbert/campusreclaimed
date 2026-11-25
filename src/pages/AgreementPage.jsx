@@ -579,14 +579,8 @@ export default function AgreementPage() {
           <h2 style={s.successHeading}>Agreement Received</h2>
           <p style={s.successBody}>
             Thank you, <strong>{form.first}</strong>. Your participation agreement has been submitted
-            and a copy is saved on file.
+            and a copy is saved on file. You'll receive an email at <strong>{form.email}</strong> when items sell.
           </p>
-          {isConsignment && (
-            <p style={s.successBody}>
-              You'll receive an email at <strong>{form.email}</strong> when items sell or approaching
-              the 60-day mark.
-            </p>
-          )}
           <p style={{ ...s.successBody, fontSize: '0.82rem', color: '#aaa', marginTop: '20px' }}>
             Questions? Reach out to Campus Reclaimed directly.
           </p>

@@ -59,7 +59,7 @@ const CLOTHING_CONDITIONS = ['New with tags', 'Like New', 'Good', 'Fair', 'Worn'
 
 const FURNITURE_SUBCATEGORIES = [
   'Chair', 'Sofa / Loveseat', 'Sectional', 'Table (Dining)', 'Table (Coffee/End)',
-  'Desk / Desk Hutch', 'Dresser / Chest', 'Bed Frame', 'Bookcase / Shelving', 'Cabinet / Storage',
+  'Desk / Desk Hutch', 'Dresser / Chest', 'Bed Frame', 'Headboard', 'Bookcase / Shelving', 'Cabinet / Storage',
   'Nightstand', 'Ottoman', 'Bench', 'Office Chair', 'Lamp', 'Other',
 ];
 const FURNITURE_MATERIALS = [
@@ -93,6 +93,7 @@ const HEADBOARD_CONDITIONS = ['Like New', 'Good — minor wear', 'Fair — visib
 function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -149,9 +150,18 @@ function LoginScreen({ onLogin }) {
               </div>
               <div className="cr-field">
                 <label htmlFor="login-password">Password</label>
-                <input type="password" id="login-password" value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="••••••••" required minLength={6} />
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <input type={showLoginPassword ? 'text' : 'password'} id="login-password" value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder="••••••••" required minLength={6}
+                    style={{ flex: 1, paddingRight: '2.5rem' }} />
+                  <button type="button"
+                    onClick={() => setShowLoginPassword(v => !v)}
+                    title={showLoginPassword ? 'Hide password' : 'Show password'}
+                    style={{ position: 'absolute', right: '0.6rem', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', color: '#6b7280', padding: '0.2rem', lineHeight: 1 }}>
+                    {showLoginPassword ? '🙈' : '👁'}
+                  </button>
+                </div>
               </div>
               <button type="submit" className="cr-btn-primary cr-login-btn" disabled={loading}>
                 {loading ? <><span className="cr-spinner"></span>Signing in…</> : 'Sign In'}
@@ -280,6 +290,12 @@ function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [userRole, setUserRole] = useState('admin'); // 'admin' | 'ambassador'
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [recoveryPassword, setRecoveryPassword] = useState('');
+  const [recoveryPasswordConfirm, setRecoveryPasswordConfirm] = useState('');
+  const [recoveryShow, setRecoveryShow] = useState(false);
+  const [recoverySaving, setRecoverySaving] = useState(false);
+  const [recoveryDone, setRecoveryDone] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -287,9 +303,14 @@ function App() {
       setUserRole(session?.user?.user_metadata?.role || 'admin');
       setAuthLoading(false);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUserRole(session?.user?.user_metadata?.role || 'admin');
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setRecoveryMode(true);
+        setSession(session);
+      } else {
+        setSession(session);
+        setUserRole(session?.user?.user_metadata?.role || 'admin');
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -350,9 +371,9 @@ function App() {
   const [priceSuggestion, setPriceSuggestion] = useState(null);   // { suggested_price, price_range, rationale, floor_price }
   const [priceLoading, setPriceLoading] = useState(false);
 
-  /* ── 30-day notification emails ── */
-  const [notifySending, setNotifySending] = useState(false);
-  const [notifyResult, setNotifyResult] = useState(null);   // { type: 'success'|'error', text }
+  /* ── tote nudge emails ── */
+  const [nudgeSending, setNudgeSending] = useState(false);
+  const [nudgeResult, setNudgeResult] = useState(null);   // { type: 'success'|'error', text }
 
   // Waiver tracking
   const [donorWaivers, setDonorWaivers] = useState({}); // { donorId: [{ id, waiver_url, signed_at }, ...] }
@@ -375,7 +396,12 @@ function App() {
   const [newAmbForm, setNewAmbForm]               = useState({ name: '', email: '', password: '' });
   const [creatingAmb, setCreatingAmb]             = useState(false);
   const [ambMessage, setAmbMessage]               = useState(null);
+  const [showAmbPassword, setShowAmbPassword]     = useState(false);
   const [resetLinks, setResetLinks]               = useState({});
+  const [setPasswordFor, setSetPasswordFor]       = useState(null); // userId of amb being set
+  const [setPasswordVal, setSetPasswordVal]       = useState('');
+  const [setPasswordShow, setSetPasswordShow]     = useState(false);
+  const [setPasswordSaving, setSetPasswordSaving] = useState(false);
 
   /* ── ambassador portal state ── */
   const [ambTab, setAmbTab]                       = useState('totes');
@@ -402,6 +428,8 @@ function App() {
   /* ── tote requests state (ambassador tasks + admin view) ── */
   const [toteRequests, setToteRequests]           = useState([]);
   const [toteRequestsLoading, setToteRequestsLoading] = useState(false);
+  const [finishedToteRequests, setFinishedToteRequests]           = useState([]);
+  const [finishedToteRequestsLoading, setFinishedToteRequestsLoading] = useState(false);
   const [reassigningId, setReassigningId]         = useState(null);
   const [agreementSearch, setAgreementSearch]     = useState('');
   const [agreementTypeFilter, setAgreementTypeFilter] = useState('all');
@@ -690,7 +718,7 @@ function App() {
 
   /* ── ambassador portal: fetch totes + donors on mount ── */
   useEffect(() => {
-    if (userRole === 'ambassador' && session) {
+    if ((userRole === 'ambassador' || userRole === 'admin') && session) {
       fetchTotes();
       fetchDonors();
     }
@@ -702,9 +730,10 @@ function App() {
     if (userRole === 'ambassador' && ambTab === 'commissions') fetchMyCommissions();
   }, [userRole, ambTab]);
 
-  /* ── tote requests: fetch when tasks tab opens ── */
+  /* ── tote requests: fetch when tasks tab opens (also totes tab, so donor filter works) ── */
   useEffect(() => {
-    if (userRole === 'ambassador' && ambTab === 'tasks') fetchToteRequests();
+    if (userRole === 'ambassador' && (ambTab === 'tasks' || ambTab === 'totes')) fetchToteRequests();
+    if (userRole === 'ambassador' && ambTab === 'finished') fetchFinishedToteRequests();
   }, [userRole, ambTab]);
 
   useEffect(() => {
@@ -809,6 +838,24 @@ function App() {
     } catch (err) { console.error('Reset password error:', err); }
   };
 
+  const setAmbassadorPassword = async (userId) => {
+    if (!setPasswordVal || setPasswordVal.length < 8) return;
+    setSetPasswordSaving(true);
+    try {
+      const { error } = await supabase.functions.invoke('manage-users', {
+        body: { action: 'set_password', userId, password: setPasswordVal },
+      });
+      if (error) throw error;
+      setSetPasswordFor(null);
+      setSetPasswordVal('');
+      setSetPasswordShow(false);
+      alert('Password updated successfully.');
+    } catch (err) {
+      console.error('Set password error:', err);
+      alert('Failed to set password: ' + (err.message || err));
+    } finally { setSetPasswordSaving(false); }
+  };
+
   /* ════════════════════════════════════════════════
      AMBASSADOR PORTAL — TOTES & ITEMS
      ════════════════════════════════════════════════ */
@@ -816,11 +863,15 @@ function App() {
     if (!supabase) return;
     setTotesLoading(true);
     try {
-      const { data, error } = await supabase
+      let totesQuery = supabase
         .from('totes')
         .select(`*, donor:donors(id, donor_name, donor_email, phone_number),
-                 items:donation_items(id, sku, item_description, metadata, status, storage_location, item_images(id, image_url, display_order))`)
-        .order('created_at', { ascending: false });
+                 items:donation_items(id, sku, item_description, metadata, status, storage_location, item_images(id, image_url, display_order))`);
+      // Ambassadors only see totes they created
+      if (userRole === 'ambassador' && session) {
+        totesQuery = totesQuery.eq('created_by', session.user.id);
+      }
+      const { data, error } = await totesQuery.order('created_at', { ascending: false });
       if (error) throw error;
       // Sort: most recently requested first
       const sorted = (data || []).slice().sort((a, b) =>
@@ -1100,6 +1151,22 @@ function App() {
       setToteRequests(data || []);
     } catch (err) { console.error('Fetch tote requests error:', err); }
     finally { setToteRequestsLoading(false); }
+  };
+
+  const fetchFinishedToteRequests = async () => {
+    if (!supabase || !session) return;
+    setFinishedToteRequestsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('tote_requests')
+        .select('id, student_name, student_email, donor_id, status, requested_at, tote_delivered_at, tote_picked_up_at, notes')
+        .in('status', ['complete', 'cancelled'])
+        .eq('assigned_to', session.user.id)
+        .order('requested_at', { ascending: false });
+      if (error) throw error;
+      setFinishedToteRequests(data || []);
+    } catch (err) { console.error('Fetch finished tote requests error:', err); }
+    finally { setFinishedToteRequestsLoading(false); }
   };
 
   const updateToteRequestStatus = async (id, status, extraFields = {}) => {
@@ -1642,20 +1709,23 @@ function App() {
     }
   };
 
-  const sendNotifications = async () => {
-    if (!supabase || notifySending) return;
-    setNotifySending(true);
-    setNotifyResult(null);
+  const sendNudges = async () => {
+    if (!supabase || nudgeSending) return;
+    setNudgeSending(true);
+    setNudgeResult(null);
     try {
-      const { data, error } = await supabase.functions.invoke('email-notifications', { body: {} });
+      const { data, error } = await supabase.functions.invoke('tote-request', {
+        body: { action: 'send_followup_nudges' }
+      });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      setNotifyResult({ type: 'success', text: data.message || 'Notifications sent.' });
-      fetchItems();   // refresh notification_sent flags and the pending count
+      const sent = data.sent ?? 0;
+      setNudgeResult({ type: 'success', text: sent > 0 ? `Sent ${sent} nudge email${sent === 1 ? '' : 's'}.` : 'No nudges due today.' });
+      fetchToteRequests();
     } catch (err) {
-      console.error('Notification send error:', err);
-      setNotifyResult({ type: 'error', text: `Send failed: ${err.message}` });
-    } finally { setNotifySending(false); }
+      console.error('Nudge send error:', err);
+      setNudgeResult({ type: 'error', text: `Send failed: ${err.message}` });
+    } finally { setNudgeSending(false); }
   };
 
   const getStatusLabel = (status) => {
@@ -1715,6 +1785,67 @@ function App() {
     );
   }
 
+  /* ─── password recovery gate ─── */
+  if (recoveryMode) {
+    const handleRecovery = async (e) => {
+      e.preventDefault();
+      if (recoveryPassword !== recoveryPasswordConfirm) return;
+      setRecoverySaving(true);
+      const { error } = await supabase.auth.updateUser({ password: recoveryPassword });
+      setRecoverySaving(false);
+      if (error) { alert('Error: ' + error.message); return; }
+      setRecoveryDone(true);
+      setTimeout(() => { setRecoveryMode(false); setRecoveryDone(false); setRecoveryPassword(''); setRecoveryPasswordConfirm(''); }, 2000);
+    };
+    return (
+      <div className="cr-app">
+        <main className="cr-main cr-login-page">
+          <div className="cr-login-container">
+            <div className="cr-login-logo">
+              <span className="cr-logo-icon">♻</span>
+              <h1 className="cr-logo-text">Campus Reclaimed</h1>
+            </div>
+            <h2 style={{ textAlign: 'center', fontWeight: 700, marginBottom: '0.25rem' }}>Set New Password</h2>
+            <p style={{ textAlign: 'center', color: '#6b7280', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Enter a new password for your account.</p>
+            {recoveryDone ? (
+              <p style={{ textAlign: 'center', color: '#16a34a', fontWeight: 600 }}>✓ Password updated! Signing you in…</p>
+            ) : (
+              <form onSubmit={handleRecovery} className="cr-login-form">
+                <div className="cr-field">
+                  <label>New Password</label>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <input type={recoveryShow ? 'text' : 'password'} value={recoveryPassword}
+                      onChange={e => setRecoveryPassword(e.target.value)}
+                      placeholder="Minimum 8 characters" required minLength={8} autoFocus
+                      style={{ flex: 1, paddingRight: '2.5rem' }} />
+                    <button type="button" onClick={() => setRecoveryShow(v => !v)}
+                      style={{ position: 'absolute', right: '0.6rem', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', color: '#6b7280', padding: '0.2rem', lineHeight: 1 }}>
+                      {recoveryShow ? '🙈' : '👁'}
+                    </button>
+                  </div>
+                </div>
+                <div className="cr-field">
+                  <label>Confirm Password</label>
+                  <input type={recoveryShow ? 'text' : 'password'} value={recoveryPasswordConfirm}
+                    onChange={e => setRecoveryPasswordConfirm(e.target.value)}
+                    placeholder="Re-enter password" required minLength={8} />
+                  {recoveryPasswordConfirm && recoveryPassword !== recoveryPasswordConfirm && (
+                    <p style={{ color: '#dc2626', fontSize: '0.8rem', margin: '0.25rem 0 0' }}>Passwords don't match</p>
+                  )}
+                </div>
+                <button type="submit" className="cr-btn-primary cr-login-btn"
+                  disabled={recoverySaving || recoveryPassword.length < 8 || recoveryPassword !== recoveryPasswordConfirm}>
+                  {recoverySaving ? <><span className="cr-spinner"></span>Saving…</> : 'Set Password'}
+                </button>
+              </form>
+            )}
+          </div>
+        </main>
+        <footer className="cr-footer"><p>Campus Reclaimed &middot; Reduce, Reuse, Reclaim</p></footer>
+      </div>
+    );
+  }
+
   /* ─── login gate ─── */
   if (!session) {
     return <LoginScreen />;
@@ -1748,7 +1879,7 @@ function App() {
         return (
           <div className="cr-amb-portal">
             {/* Ambassador sub-nav */}
-            <nav className="cr-nav four" role="tablist">
+            <nav className="cr-nav five" role="tablist">
               <button role="tab" className={`cr-nav-btn ${ambTab === 'totes' ? 'active' : ''}`}
                 onClick={() => setAmbTab('totes')}>
                 🧺 Tote Intake
@@ -1773,6 +1904,11 @@ function App() {
                 {myCommissions.filter(c => !c.ambassador_commission_paid).length > 0 && (
                   <span className="cr-count">{myCommissions.filter(c => !c.ambassador_commission_paid).length}</span>
                 )}
+              </button>
+              <button role="tab" className={`cr-nav-btn ${ambTab === 'finished' ? 'active' : ''}`}
+                onClick={() => { setAmbTab('finished'); fetchFinishedToteRequests(); }}>
+                ✅ Finished Totes
+                {finishedToteRequests.length > 0 && <span className="cr-count">{finishedToteRequests.length}</span>}
               </button>
             </nav>
 
@@ -1910,7 +2046,10 @@ function App() {
                         <select value={newToteForm.donorId}
                           onChange={e => setNewToteForm(p => ({ ...p, donorId: e.target.value }))}>
                           <option value="">Select donor…</option>
-                          {donors.map(d => <option key={d.id} value={d.id}>{d.donor_name}</option>)}
+                          {(userRole === 'ambassador'
+                            ? donors.filter(d => toteRequests.some(r => r.donor_id === d.id))
+                            : donors
+                          ).map(d => <option key={d.id} value={d.id}>{d.donor_name}</option>)}
                         </select>
                       </div>
                       <div className="cr-field">
@@ -2064,7 +2203,7 @@ function App() {
                                       <label>Category <span className="cr-req">*</span></label>
                                       <select value={toteItemForm.category || 'Clothing'}
                                         onChange={e => setToteItemForm(p => ({ ...p, category: e.target.value, metadata: {} }))}>
-                                        {['Bedding', 'Books', 'Clothing', 'Electronics', 'Furniture', 'Kitchen', 'Other'].map(c => (
+                                        {['Books', 'Clothing', 'Electronics', 'Furniture', 'Kitchen', 'Other'].map(c => (
                                           <option key={c}>{c}</option>
                                         ))}
                                       </select>
@@ -2329,6 +2468,49 @@ function App() {
               </main>
             )}
 
+            {/* ── FINISHED TOTES TAB ── */}
+            {ambTab === 'finished' && (
+              <main className="cr-main">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <h2 className="cr-section-title" style={{ margin: 0 }}>Finished Totes</h2>
+                  <button className="cr-act edit" onClick={fetchFinishedToteRequests} disabled={finishedToteRequestsLoading}>
+                    {finishedToteRequestsLoading ? <span className="cr-spinner sm"></span> : '↻'} Refresh
+                  </button>
+                </div>
+                {finishedToteRequestsLoading ? (
+                  <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading…</p></div>
+                ) : finishedToteRequests.length === 0 ? (
+                  <div className="cr-empty"><h3>No finished totes yet</h3><p>Completed and cancelled tote requests will appear here.</p></div>
+                ) : (
+                  <div className="cr-task-list">
+                    {finishedToteRequests.map(req => (
+                      <div key={req.id} className="cr-task-card sla-ok" style={{ opacity: 0.85 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
+                          <div>
+                            <strong>{req.student_name}</strong>
+                            {req.student_email && <div className="cr-hint">{req.student_email}</div>}
+                            {req.requested_at && (
+                              <div className="cr-hint">Requested {new Date(req.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                            )}
+                            {req.tote_delivered_at && (
+                              <div className="cr-hint">Delivered {new Date(req.tote_delivered_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                            )}
+                            {req.tote_picked_up_at && (
+                              <div className="cr-hint">Picked up {new Date(req.tote_picked_up_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                            )}
+                            {req.notes && <div className="cr-hint" style={{ marginTop: 4, fontStyle: 'italic' }}>{req.notes}</div>}
+                          </div>
+                          <span className={`cr-tag ${req.status === 'complete' ? 'active' : 'removed'}`} style={{ flexShrink: 0 }}>
+                            {req.status === 'complete' ? '✓ Complete' : 'Cancelled'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </main>
+            )}
+
             {/* ── MY COMMISSIONS TAB ── */}
             {ambTab === 'commissions' && (
               <main className="cr-main">
@@ -2413,7 +2595,7 @@ function App() {
       </section>
 
       {/* ═══ NAV TABS ═══ */}
-      <nav className={`cr-nav ${userRole === 'admin' ? 'four' : 'three'}`} role="tablist">
+      <nav className={`cr-nav ${userRole === 'admin' ? 'five' : 'three'}`} role="tablist">
         <button role="tab" aria-selected={tab === 'donate'}
           className={`cr-nav-btn ${tab === 'donate' ? 'active' : ''}`}
           onClick={() => setTab('donate')}>
@@ -2448,6 +2630,14 @@ function App() {
             </svg>
             Users
             {ambassadors.length > 0 && <span className="cr-count">{ambassadors.length}</span>}
+          </button>
+        )}
+        {userRole === 'admin' && (
+          <button role="tab" aria-selected={tab === 'totes'}
+            className={`cr-nav-btn ${tab === 'totes' ? 'active' : ''}`}
+            onClick={() => { setTab('totes'); fetchTotes(); fetchDonors(); }}>
+            🧺 Totes
+            {totes.length > 0 && <span className="cr-count">{totes.length}</span>}
           </button>
         )}
       </nav>
@@ -2541,7 +2731,7 @@ function App() {
                         <label htmlFor="donorEmail">Email Address</label>
                         <input type="email" id="donorEmail" name="donorEmail" value={donorForm.donorEmail}
                           onChange={handleDonorFormChange} placeholder="jane@university.edu" />
-                        <span className="cr-hint">For 30-day pickup notifications</span>
+                        <span className="cr-hint">Used for tote scheduling and donor communications</span>
                       </div>
                       <div className="cr-field cr-span-2">
                         <label htmlFor="address">Address <span className="cr-req">*</span></label>
@@ -3114,28 +3304,7 @@ function App() {
               <span className="cr-stat-num">{stats.donors}</span>
               <span className="cr-stat-label">Active Donors</span>
             </div>
-            <div className="cr-stat">
-              <div className="cr-stat-icon amber">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="24" height="24">
-                  <path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-              <span className="cr-stat-num">{stats.pendingNotify}</span>
-              <span className="cr-stat-label">Pending Notifications</span>
-              {stats.pendingNotify > 0 && (
-                <button className="cr-notify-btn" onClick={sendNotifications} disabled={notifySending}>
-                  {notifySending ? <><span className="cr-spinner sm"></span> Sending…</> : 'Send Emails'}
-                </button>
-              )}
-            </div>
           </div>
-
-          {notifyResult && (
-            <div className={`cr-toast ${notifyResult.type}`} role="status">
-              {notifyResult.text}
-              <button className="cr-clear" onClick={() => setNotifyResult(null)}>&times;</button>
-            </div>
-          )}
 
           <div className="cr-toolbar">
             <div className="cr-search">
@@ -4337,8 +4506,24 @@ function App() {
               </div>
               <div className="cr-field">
                 <label>Password <span className="cr-req">*</span></label>
-                <input type="password" placeholder="Min. 8 characters" value={newAmbForm.password}
-                  onChange={e => setNewAmbForm(p => ({ ...p, password: e.target.value }))} />
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <input
+                    type={showAmbPassword ? 'text' : 'password'}
+                    placeholder="Min. 8 characters"
+                    value={newAmbForm.password}
+                    onChange={e => setNewAmbForm(p => ({ ...p, password: e.target.value }))}
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    className="cr-act edit"
+                    title={showAmbPassword ? 'Hide password' : 'Show password'}
+                    onClick={() => setShowAmbPassword(v => !v)}
+                    style={{ flexShrink: 0, padding: '4px 8px' }}
+                  >
+                    {showAmbPassword ? '🙈' : '👁'}
+                  </button>
+                </div>
               </div>
               <div className="cr-field" style={{ justifyContent: 'flex-end' }}>
                 <button className="cr-btn-primary" onClick={createAmbassador} disabled={creatingAmb}>
@@ -4407,13 +4592,49 @@ function App() {
                       <td className="cr-agreements-date">{a.created_at ? new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
                       <td>
                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          <button className="cr-act edit" onClick={() => {
+                            setSetPasswordFor(a.id);
+                            setSetPasswordVal('');
+                            setSetPasswordShow(false);
+                          }}>
+                            Set Password
+                          </button>
                           <button className="cr-act edit" onClick={() => resetAmbassadorPassword(a.id, a.email)}>
-                            Reset Password
+                            Reset Link
                           </button>
                           <button className="cr-act danger" onClick={() => removeAmbassador(a.id, a.email)}>
                             Remove
                           </button>
                         </div>
+                        {setPasswordFor === a.id && (
+                          <div style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', gap: 4, alignItems: 'center', flex: 1, minWidth: 200 }}>
+                              <input
+                                type={setPasswordShow ? 'text' : 'password'}
+                                placeholder="New password (min 8 chars)"
+                                value={setPasswordVal}
+                                onChange={e => setSetPasswordVal(e.target.value)}
+                                style={{ flex: 1, fontSize: '0.85rem', padding: '4px 8px' }}
+                                autoFocus
+                              />
+                              <button type="button" className="cr-act edit" title={setPasswordShow ? 'Hide' : 'Show'}
+                                style={{ padding: '4px 8px', fontSize: '0.85rem' }}
+                                onClick={() => setSetPasswordShow(v => !v)}>
+                                {setPasswordShow ? '🙈' : '👁'}
+                              </button>
+                            </div>
+                            <button className="cr-act edit"
+                              disabled={setPasswordSaving || setPasswordVal.length < 8}
+                              onClick={() => setAmbassadorPassword(a.id)}
+                              style={{ fontSize: '0.85rem' }}>
+                              {setPasswordSaving ? 'Saving…' : 'Save'}
+                            </button>
+                            <button className="cr-act" onClick={() => { setSetPasswordFor(null); setSetPasswordVal(''); }}
+                              style={{ fontSize: '0.85rem' }}>
+                              Cancel
+                            </button>
+                          </div>
+                        )}
                         {resetLinks[a.id] && (
                           <div className="cr-reset-link-box">
                             <span className="cr-hint">Reset link (share privately):</span>
@@ -4430,87 +4651,140 @@ function App() {
             )}
           </div>
 
-          {/* ── Active Tote Requests with reassignment ── */}
+          {/* ── Tote Request Status Dashboard ── */}
           <div className="cr-users-list" style={{ marginTop: '1.5rem' }}>
             <div className="cr-users-list-header">
-              <h3>Active Tote Requests</h3>
-              <button className="cr-act edit" onClick={fetchToteRequests} disabled={toteRequestsLoading}>
-                {toteRequestsLoading ? <span className="cr-spinner sm"></span> : '↻'} Refresh
-              </button>
+              <h3>Tote Request Dashboard</h3>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <button className="cr-act" onClick={sendNudges} disabled={nudgeSending}
+                  title="Send 3/7/14-day reminder emails to donors who haven't scheduled pickup"
+                  style={{ background: '#1c3a2a', color: '#fff', borderRadius: 6, padding: '4px 12px', fontSize: '.82rem' }}>
+                  {nudgeSending ? <><span className="cr-spinner sm"></span> Sending…</> : '📧 Send Nudges'}
+                </button>
+                <button className="cr-act edit" onClick={fetchToteRequests} disabled={toteRequestsLoading}>
+                  {toteRequestsLoading ? <span className="cr-spinner sm"></span> : '↻'} Refresh
+                </button>
+              </div>
             </div>
+            {nudgeResult && (
+              <div className={`cr-toast ${nudgeResult.type}`} role="status" style={{ marginBottom: '0.75rem' }}>
+                {nudgeResult.text}
+                <button className="cr-clear" onClick={() => setNudgeResult(null)}>&times;</button>
+              </div>
+            )}
+            <p className="cr-hint" style={{ marginBottom: '0.75rem', fontSize: '.8rem' }}>
+              "Send Nudges" emails donors whose tote has been delivered but no pickup is scheduled — day 3, 7, and 14 reminders.
+              For automatic daily nudges, set up a pg_cron job calling the <code>tote-request</code> function with <code>{'{ "action": "send_followup_nudges" }'}</code>.
+            </p>
             {toteRequestsLoading ? (
               <div className="cr-loading"><span className="cr-spinner lg"></span></div>
             ) : toteRequests.length === 0 ? (
-              <p className="cr-section-desc" style={{ marginTop: '.5rem' }}>No active tote requests yet.</p>
-            ) : (
-              <div className="cr-task-list">
-                {toteRequests.map(req => {
-                  const sla = getSlaStatus(req);
-                  return (
-                    <div key={req.id} className={`cr-task-card sla-${sla}`}>
-                      <div className="cr-task-header">
-                        <div style={{ flex: 1 }}>
-                          <strong>{req.student_name}</strong>
-                          <span style={{ fontSize: '.8rem', color: '#888', marginLeft: 8 }}>{req.student_email}</span>
-                          <span className={`cr-task-status-badge ${req.status}`}>
-                            {req.status === 'pending' ? 'Pending Delivery' : req.status === 'tote_out' ? 'Tote Out' : req.status === 'scheduled' ? (req.tote_delivered_at ? '📅 Pickup Scheduled' : '📅 Drop-Off Scheduled') : 'Picked Up'}
-                          </span>
-                        </div>
-                        <span className={`cr-sla-badge sla-${sla}`}>
-                          {sla === 'overdue' ? '🔴 Overdue' : sla === 'warning' ? '🟡 Due Soon' : '🟢 On Track'}
-                        </span>
-                      </div>
-                      <div className="cr-task-details">
-                        <span>📍 {req.student_address}</span>
-                        {req.student_phone && <span>📞 {req.student_phone}</span>}
-                        {req.item_types && <span>👕 {req.item_types}</span>}
-                        {req.scheduled_at && <span>📅 {req.tote_delivered_at ? 'Pickup' : 'Drop-off'}: {new Date(req.scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })} ET</span>}
-                        <span className="cr-hint">Requested {new Date(req.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
-                      </div>
-                      <div className="cr-task-actions" style={{ alignItems: 'center' }}>
-                        <span style={{ fontSize: '.85rem', color: '#555' }}>
-                          Assigned: <strong>{req.ambassador?.full_name || 'Unassigned'}</strong>
-                        </span>
-                        <select value={req.assigned_to || ''}
-                          disabled={reassigningId === req.id}
-                          onChange={e => reassignToteRequest(req.id, e.target.value)}
-                          className="cr-reassign-select">
-                          <option value="">— Reassign to… —</option>
-                          {ambassadors.filter(a => a.active).map(a => (
-                            <option key={a.id} value={a.id}>{a.full_name}</option>
-                          ))}
-                        </select>
-                        {reassigningId === req.id && <span className="cr-spinner sm"></span>}
-                        {req.status === 'pending' && (
-                          <button className="cr-btn-primary sm"
-                            onClick={() => updateToteRequestStatus(req.id, 'tote_out')}>
-                            ✓ Mark Tote Delivered
-                          </button>
-                        )}
-                        {req.status === 'scheduled' && !req.tote_delivered_at && (
-                          <button className="cr-btn-primary sm"
-                            onClick={() => updateToteRequestStatus(req.id, 'tote_out')}>
-                            ✓ Mark Tote Delivered
-                          </button>
-                        )}
-                        {req.status === 'scheduled' && req.tote_delivered_at && (
-                          <button className="cr-btn-primary sm"
-                            onClick={() => updateToteRequestStatus(req.id, 'tote_picked_up')}>
-                            ✓ Mark Tote Picked Up
-                          </button>
-                        )}
-                        {req.status === 'tote_out' && (
-                          <button className="cr-btn-secondary sm"
-                            onClick={() => updateToteRequestStatus(req.id, 'tote_picked_up')}>
-                            ✓ Mark Tote Picked Up
-                          </button>
-                        )}
-                      </div>
+              <p className="cr-section-desc" style={{ marginTop: '.5rem' }}>No active tote requests.</p>
+            ) : (() => {
+              const now = Date.now();
+              const daysSince = (d) => d ? Math.floor((now - new Date(d).getTime()) / 86400000) : null;
+              const groups = [
+                { label: '📦 Not Yet Delivered', filter: r => r.status === 'pending' },
+                { label: '🛍 Tote Out — Awaiting Pickup Schedule', filter: r => r.status === 'tote_out' && !r.scheduled_at },
+                { label: '📅 Pickup Scheduled', filter: r => r.status === 'tote_out' && r.scheduled_at },
+                { label: '🗓 Drop-Off Scheduled', filter: r => r.status === 'scheduled' && !r.tote_delivered_at },
+                { label: '✅ Pickup Scheduled (Post-Delivery)', filter: r => r.status === 'scheduled' && r.tote_delivered_at },
+              ];
+              return groups.map(({ label, filter }) => {
+                const reqs = toteRequests.filter(filter);
+                if (reqs.length === 0) return null;
+                return (
+                  <div key={label} style={{ marginBottom: '1.25rem' }}>
+                    <div style={{ fontSize: '.8rem', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: '.5rem' }}>
+                      {label} ({reqs.length})
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    <div className="cr-task-list">
+                      {reqs.map(req => {
+                        const sla = getSlaStatus(req);
+                        const daysOut = daysSince(req.tote_delivered_at);
+                        const nudgesSent = req.followup_count || 0;
+                        return (
+                          <div key={req.id} className={`cr-task-card sla-${sla}`}>
+                            <div className="cr-task-header">
+                              <div style={{ flex: 1 }}>
+                                <strong>{req.student_name}</strong>
+                                <span style={{ fontSize: '.8rem', color: '#888', marginLeft: 8 }}>{req.student_email}</span>
+                                {req.student_phone && <span style={{ fontSize: '.8rem', color: '#888', marginLeft: 8 }}>· {req.student_phone}</span>}
+                              </div>
+                              <span className={`cr-sla-badge sla-${sla}`}>
+                                {sla === 'overdue' ? '🔴 Overdue' : sla === 'warning' ? '🟡 Due Soon' : '🟢 On Track'}
+                              </span>
+                            </div>
+                            <div className="cr-task-details">
+                              <span>📍 {req.student_address}</span>
+                              {req.item_types && <span>👕 {req.item_types}</span>}
+                              {req.scheduled_at && <span>📅 {req.tote_delivered_at ? 'Pickup' : 'Drop-off'}: {new Date(req.scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })} ET</span>}
+                              <span className="cr-hint">Requested {new Date(req.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                            </div>
+                            {/* Email status row */}
+                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', padding: '4px 0', fontSize: '.78rem' }}>
+                              <span style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 4, padding: '2px 7px', color: '#166534' }}>
+                                📧 Delivery reminder: {req.tote_delivered_at ? 'sent' : 'not yet'}
+                              </span>
+                              <span style={{ background: req.reminder_2hr_sent ? '#f0fdf4' : '#fafafa', border: `1px solid ${req.reminder_2hr_sent ? '#bbf7d0' : '#e5e7eb'}`, borderRadius: 4, padding: '2px 7px', color: req.reminder_2hr_sent ? '#166534' : '#6b7280' }}>
+                                ⏰ 2-hr reminder: {req.reminder_2hr_sent ? 'sent' : 'not sent'}
+                              </span>
+                              <span style={{ background: nudgesSent > 0 ? '#fffbeb' : '#fafafa', border: `1px solid ${nudgesSent > 0 ? '#fde68a' : '#e5e7eb'}`, borderRadius: 4, padding: '2px 7px', color: nudgesSent > 0 ? '#92400e' : '#6b7280' }}>
+                                🔔 Nudges sent: {nudgesSent}/3{nudgesSent > 0 && req.last_followup_at ? ` (last: ${new Date(req.last_followup_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})` : ''}
+                              </span>
+                              {daysOut !== null && (
+                                <span style={{ background: daysOut >= 14 ? '#fef2f2' : daysOut >= 7 ? '#fffbeb' : '#f0fdf4', border: `1px solid ${daysOut >= 14 ? '#fecaca' : daysOut >= 7 ? '#fde68a' : '#bbf7d0'}`, borderRadius: 4, padding: '2px 7px', color: daysOut >= 14 ? '#991b1b' : daysOut >= 7 ? '#92400e' : '#166534' }}>
+                                  📆 {daysOut}d since delivery
+                                </span>
+                              )}
+                            </div>
+                            <div className="cr-task-actions" style={{ alignItems: 'center' }}>
+                              <span style={{ fontSize: '.85rem', color: '#555' }}>
+                                Assigned: <strong>{req.ambassador?.full_name || 'Unassigned'}</strong>
+                              </span>
+                              <select value={req.assigned_to || ''}
+                                disabled={reassigningId === req.id}
+                                onChange={e => reassignToteRequest(req.id, e.target.value)}
+                                className="cr-reassign-select">
+                                <option value="">— Reassign to… —</option>
+                                {ambassadors.filter(a => a.active).map(a => (
+                                  <option key={a.id} value={a.id}>{a.full_name}</option>
+                                ))}
+                              </select>
+                              {reassigningId === req.id && <span className="cr-spinner sm"></span>}
+                              {req.status === 'pending' && (
+                                <button className="cr-btn-primary sm"
+                                  onClick={() => updateToteRequestStatus(req.id, 'tote_out')}>
+                                  ✓ Mark Tote Delivered
+                                </button>
+                              )}
+                              {req.status === 'scheduled' && !req.tote_delivered_at && (
+                                <button className="cr-btn-primary sm"
+                                  onClick={() => updateToteRequestStatus(req.id, 'tote_out')}>
+                                  ✓ Mark Tote Delivered
+                                </button>
+                              )}
+                              {req.status === 'scheduled' && req.tote_delivered_at && (
+                                <button className="cr-btn-primary sm"
+                                  onClick={() => updateToteRequestStatus(req.id, 'tote_picked_up')}>
+                                  ✓ Mark Tote Picked Up
+                                </button>
+                              )}
+                              {req.status === 'tote_out' && (
+                                <button className="cr-btn-secondary sm"
+                                  onClick={() => updateToteRequestStatus(req.id, 'tote_picked_up')}>
+                                  ✓ Mark Tote Picked Up
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </div>
 
           {/* ── Ambassador Commissions ── */}
@@ -4523,6 +4797,411 @@ function App() {
           </div>
 
           <ReferenceTemplatesPanel supabase={supabase} />
+        </main>
+      )}
+
+      {/* ═══ TAB: TOTES ═══ */}
+      {tab === 'totes' && userRole === 'admin' && (
+        <main className="cr-main">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h2 className="cr-section-title" style={{ margin: 0 }}>Tote Intake</h2>
+            <button className="cr-btn-primary sm" onClick={() => setShowNewTote(true)}>
+              + New Tote
+            </button>
+          </div>
+
+          {/* New Tote Form */}
+          {showNewTote && (
+            <div className="cr-amb-new-tote">
+              <h3>Create New Tote</h3>
+              <div className="cr-field-grid">
+                <div className="cr-field">
+                  <label>Donor / Consignor <span className="cr-req">*</span></label>
+                  <select value={newToteForm.donorId}
+                    onChange={e => setNewToteForm(p => ({ ...p, donorId: e.target.value }))}>
+                    <option value="">Select donor…</option>
+                    {donors.map(d => <option key={d.id} value={d.id}>{d.donor_name}</option>)}
+                  </select>
+                </div>
+                <div className="cr-field">
+                  <label>Pickup Date <span className="cr-req">*</span></label>
+                  <input type="date" value={newToteForm.pickupDate}
+                    onChange={e => setNewToteForm(p => ({ ...p, pickupDate: e.target.value }))} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '.75rem', marginTop: '.75rem' }}>
+                <button className="cr-btn-primary sm" onClick={createTote} disabled={creatingTote || !newToteForm.donorId}>
+                  {creatingTote ? <><span className="cr-spinner"></span> Creating…</> : 'Create Tote'}
+                </button>
+                <button className="cr-btn-secondary" onClick={() => setShowNewTote(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {/* Tote list — admin sees all totes */}
+          {totesLoading ? (
+            <div className="cr-loading"><span className="cr-spinner lg"></span><p>Loading totes…</p></div>
+          ) : totes.length === 0 ? (
+            <div className="cr-empty"><h3>No totes yet</h3><p>Create the first tote above.</p></div>
+          ) : (
+            <div className="cr-tote-list">
+              {totes.map(tote => {
+                const isExp = expandedTote === tote.id;
+                const itemCount = (tote.items || []).length;
+                const donor = tote.donor;
+                return (
+                  <div key={tote.id} className={`cr-tote-card ${isExp ? 'expanded' : ''}`}>
+                    <button className="cr-card-header" onClick={() => setExpandedTote(isExp ? null : tote.id)}>
+                      <div className="cr-card-left">
+                        <div className="cr-donor-avatar">{tote.tote_label?.slice(-3)}</div>
+                        <div className="cr-card-info">
+                          <strong>{tote.tote_label}</strong>
+                          <span className="cr-card-donor">
+                            {donor?.donor_name || '—'}
+                            <span className="cr-tote-count">{itemCount} piece{itemCount !== 1 ? 's' : ''}</span>
+                          </span>
+                        </div>
+                      </div>
+                      <div className="cr-card-right">
+                        <span className="cr-tag location">{tote.pickup_date}</span>
+                        <svg className={`cr-chevron ${isExp ? 'open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20">
+                          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                    </button>
+
+                          {isExp && (
+                            <div className="cr-tote-detail">
+                              {/* Donor info */}
+                              <div className="cr-tote-donor-info">
+                                {donor?.donor_email && <span>📧 {donor.donor_email}</span>}
+                                {donor?.phone_number && <span>📞 {donor.phone_number}</span>}
+                              </div>
+
+                              {/* Item list */}
+                              {(tote.items || []).length > 0 && (
+                                <div className="cr-tote-items">
+                                  {tote.items.map(item => (
+                                    <div key={item.id} className="cr-tote-item-row">
+                                      {(() => {
+                                        const imgs = (item.item_images || []).slice().sort((a, b) => a.display_order - b.display_order);
+                                        const thumb = imgs.length > 0 ? imgs[0].image_url : null;
+                                        return thumb ? (
+                                          <img src={thumb} alt="" className="cr-tote-item-thumb" loading="lazy" />
+                                        ) : (
+                                          <div className="cr-tote-item-thumb placeholder" />
+                                        );
+                                      })()}
+                                      <span className="cr-sku-badge">{item.sku}</span>
+                                      <span className="cr-tote-item-desc">{item.item_description}</span>
+                                      {item.metadata?.gender && <span className="cr-tag sm">{item.metadata.gender}</span>}
+                                      {item.metadata?.size && <span className="cr-tag sm">Size {item.metadata.size}</span>}
+                                      {item.storage_location && <span className="cr-tag location sm">{item.storage_location}</span>}
+                                      <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+                                        <button className="cr-btn-secondary sm" onClick={() => {
+                                          setToteItemForm({ itemDescription: item.item_description || '', storageLocation: item.storage_location || '', category: item.category || 'Clothing', agreementType: item.agreement_type || '', metadata: item.metadata || {} });
+                                          setEditingToteItem(item);
+                                          setAddingToTote(tote.id);
+                                        }}>Edit</button>
+                                        <button className="cr-btn-secondary sm" style={{ color: '#c0392b' }} onClick={() => deleteToteItem(item.id, tote.id)}>Delete</button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Add item form */}
+                              {addingToTote === tote.id ? (
+                                <div className="cr-amb-add-item">
+                                  <h4>{editingToteItem ? 'Edit Item' : 'Add Item'}</h4>
+                                  <div className="cr-field-grid">
+                                    <div className="cr-field cr-span-2">
+                                      <label>
+                                        Photo
+                                        {toteAiStatus === 'analyzing' && <span className="cr-ai-badge analyzing"><span className="cr-spinner sm"></span> Analyzing…</span>}
+                                        {toteAiStatus === 'done' && <span className="cr-ai-badge done">✦ AI filled</span>}
+                                        {toteAiStatus === 'error' && <span className="cr-ai-badge error">AI unavailable</span>}
+                                      </label>
+                                      <div className="cr-multi-upload">
+                                        {toteItemPreviews.map((src, i) => (
+                                          <div key={i} className="cr-upload-thumb-wrap" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                                            <div className="cr-upload-thumb" style={{ width: 80, height: 70 }}>
+                                              <img src={src} alt={`Preview ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
+                                              <button type="button" className="cr-upload-remove"
+                                                onClick={() => {
+                                                  setToteItemFiles(prev => prev.filter((_, fi) => fi !== i));
+                                                  setToteItemPreviews(prev => prev.filter((_, pi) => pi !== i));
+                                                  if (i === 0) setToteAiStatus('idle');
+                                                }}>&times;</button>
+                                            </div>
+                                            <button type="button"
+                                              disabled={bgRemovingTote === i}
+                                              style={{ fontSize: 11, padding: '3px 8px', background: bgRemovingTote === i ? '#e5e7eb' : '#f0fdf4', color: bgRemovingTote === i ? '#9ca3af' : '#166534', border: '1px solid #bbf7d0', borderRadius: 6, cursor: bgRemovingTote === i ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+                                              onClick={async () => {
+                                                const file = toteItemFiles[i];
+                                                if (!file) return;
+                                                setBgRemovingTote(i);
+                                                try {
+                                                  const processed = await removeBackgroundToWhite(file);
+                                                  const reader = new FileReader();
+                                                  reader.onloadend = () => {
+                                                    setToteItemPreviews(prev => { const a = [...prev]; a[i] = String(reader.result); return a; });
+                                                  };
+                                                  reader.readAsDataURL(processed);
+                                                  setToteItemFiles(prev => { const a = [...prev]; a[i] = processed; return a; });
+                                                } catch (err) {
+                                                  console.error('Background removal failed:', err);
+                                                } finally { setBgRemovingTote(null); }
+                                              }}>
+                                              {bgRemovingTote === i ? <><span className="cr-spinner sm"></span></> : '✂'}
+                                            </button>
+                                          </div>
+                                        ))}
+                                        {toteItemPreviews.length < 5 && (
+                                          <div className="cr-upload-zone compact add-more">
+                                            <input type="file" id="tote-item-photo" accept="image/*" multiple capture="environment" className="cr-file-input" onChange={handleToteItemPhoto} />
+                                            <label htmlFor="tote-item-photo" className="cr-file-label compact">
+                                              <div className="cr-upload-prompt compact">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} width="20" height="20"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                                <span className="cr-upload-text">{toteItemPreviews.length === 0 ? 'Add photos' : 'Add more'}</span>
+                                              </div>
+                                            </label>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Category <span className="cr-req">*</span></label>
+                                      <select value={toteItemForm.category || 'Clothing'}
+                                        onChange={e => setToteItemForm(p => ({ ...p, category: e.target.value, metadata: {} }))}>
+                                        {['Books', 'Clothing', 'Electronics', 'Furniture', 'Kitchen', 'Other'].map(c => (
+                                          <option key={c}>{c}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Agreement Type <span className="cr-req">*</span></label>
+                                      <div className="cr-agreement-toggle">
+                                        <button type="button"
+                                          className={`cr-agreement-btn donation ${toteItemForm.agreementType === 'donation' ? 'active' : ''}`}
+                                          onClick={() => setToteItemForm(p => ({ ...p, agreementType: p.agreementType === 'donation' ? '' : 'donation' }))}>
+                                          <span className="cr-agreement-icon">🎁</span>Donation
+                                        </button>
+                                        <button type="button"
+                                          className={`cr-agreement-btn consignment ${toteItemForm.agreementType === 'consignment' ? 'active' : ''}`}
+                                          onClick={() => setToteItemForm(p => ({ ...p, agreementType: p.agreementType === 'consignment' ? '' : 'consignment' }))}>
+                                          <span className="cr-agreement-icon">🔄</span>Consignment
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Description <span className="cr-req">*</span></label>
+                                      <input type="text" placeholder="e.g. Red cotton t-shirt" value={toteItemForm.itemDescription}
+                                        onChange={e => setToteItemForm(p => ({ ...p, itemDescription: e.target.value }))} />
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Storage Location</label>
+                                      <input type="text" placeholder="e.g. Bin A-3, Room 102" value={toteItemForm.storageLocation}
+                                        onChange={e => setToteItemForm(p => ({ ...p, storageLocation: e.target.value }))} />
+                                    </div>
+                                    {toteItemForm.category === 'Clothing' && (<>
+                                    <div className="cr-field">
+                                      <label>Type</label>
+                                      <select value={toteItemForm.metadata.subcategory || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, subcategory: e.target.value } }))}>
+                                        <option value="">Select type…</option>
+                                        {CLOTHING_SUBCATEGORIES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Gender</label>
+                                      <select value={toteItemForm.metadata.gender || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, gender: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_GENDERS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Age Group</label>
+                                      <select value={toteItemForm.metadata.age_group || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, age_group: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_AGE_GROUPS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Size <span style={{color:'#dc2626'}}>*</span></label>
+                                      <select value={toteItemForm.metadata.size || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, size: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_SIZES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Color <span style={{color:'#dc2626'}}>*</span></label>
+                                      <input type="text" placeholder="e.g. Navy Blue" value={toteItemForm.metadata.color || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Brand</label>
+                                      <input type="text" placeholder="e.g. Levi's" value={toteItemForm.metadata.brand || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, brand: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Fabric / Material <span style={{color:'#dc2626'}}>*</span></label>
+                                      <select value={toteItemForm.metadata.fabric || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, fabric: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_FABRICS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Condition <span style={{color:'#dc2626'}}>*</span></label>
+                                      <select value={toteItemForm.metadata.condition || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, condition: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {CLOTHING_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Weight (lbs)</label>
+                                      <input type="number" step="0.1" min="0" placeholder="e.g. 1.5" value={toteItemForm.metadata.weight_lbs || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, weight_lbs: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>New With Tags?</label>
+                                      <select value={toteItemForm.metadata.nwt || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, nwt: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        <option value="Yes">Yes</option>
+                                        <option value="No">No</option>
+                                      </select>
+                                    </div>
+                                    </>)}
+                                    {toteItemForm.category === 'Furniture' && (<>
+                                    <div className="cr-field">
+                                      <label>Type <span style={{color:'#dc2626'}}>*</span></label>
+                                      <select value={toteItemForm.metadata.subcategory || ''} onChange={e => {
+                                        const sub = e.target.value;
+                                        setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, subcategory: sub } }));
+                                        fetchItemTemplates('Furniture', sub);
+                                      }}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_SUBCATEGORIES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    {itemTemplates.length > 0 && (
+                                      <div className="cr-field cr-span-2" style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '0.5rem 0.75rem' }}>
+                                        <label style={{ color: '#16a34a', fontSize: '0.8rem', marginBottom: 4 }}>📋 Use a saved template</label>
+                                        <select defaultValue="" onChange={e => {
+                                          const t = itemTemplates.find(t => t.id === e.target.value);
+                                          if (t) applyItemTemplate(t, setToteItemForm);
+                                        }}>
+                                          <option value="">— Pick a template —</option>
+                                          {itemTemplates.map(t => (
+                                            <option key={t.id} value={t.id}>
+                                              {t.subcategory || t.category}{t.description ? ` · ${t.description.slice(0, 40)}` : ''}{(t.dim_w || t.dim_h) ? ` (${[t.dim_w,t.dim_d,t.dim_h].filter(Boolean).join('×')}")` : ''}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    )}
+                                    <div className="cr-field">
+                                      <label>Color / Finish <span style={{color:'#dc2626'}}>*</span></label>
+                                      <input type="text" placeholder="e.g. Walnut Brown" value={toteItemForm.metadata.color || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, color: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Material <span style={{color:'#dc2626'}}>*</span></label>
+                                      <select value={toteItemForm.metadata.material || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, material: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_MATERIALS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Style</label>
+                                      <select value={toteItemForm.metadata.style || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, style: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_STYLES.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Condition <span style={{color:'#dc2626'}}>*</span></label>
+                                      <select value={toteItemForm.metadata.condition || ''} onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, condition: e.target.value } }))}>
+                                        <option value="">Select…</option>
+                                        {FURNITURE_CONDITIONS.map(v => <option key={v}>{v}</option>)}
+                                      </select>
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Dimensions (inches)</label>
+                                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                        <input type="number" step="0.5" min="0" placeholder='W"' style={{ width: 72 }} value={toteItemForm.metadata.dim_w || ''}
+                                          onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, dim_w: e.target.value } }))} />
+                                        <span className="cr-hint">×</span>
+                                        <input type="number" step="0.5" min="0" placeholder='D"' style={{ width: 72 }} value={toteItemForm.metadata.dim_d || ''}
+                                          onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, dim_d: e.target.value } }))} />
+                                        <span className="cr-hint">×</span>
+                                        <input type="number" step="0.5" min="0" placeholder='H"' style={{ width: 72 }} value={toteItemForm.metadata.dim_h || ''}
+                                          onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, dim_h: e.target.value } }))} />
+                                        <span className="cr-hint" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>W × D × H</span>
+                                      </div>
+                                    </div>
+                                    <div className="cr-field">
+                                      <label>Weight (lbs)</label>
+                                      <input type="number" step="1" min="0" placeholder="e.g. 45" value={toteItemForm.metadata.weight_lbs || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, weight_lbs: e.target.value } }))} />
+                                    </div>
+                                    <div className="cr-field cr-span-2">
+                                      <label>Notes</label>
+                                      <input type="text" placeholder="assembly needed, pet home, smoke-free, missing hardware, etc." value={toteItemForm.metadata.notes || ''}
+                                        onChange={e => setToteItemForm(p => ({ ...p, metadata: { ...p.metadata, notes: e.target.value } }))} />
+                                    </div>
+</>)}
+                                  </div>
+                                  {(() => {
+                                    const m = toteItemForm.metadata;
+                                    const missing = [];
+                                    if (toteItemForm.category === 'Clothing') {
+                                      if (!m.color) missing.push('Color');
+                                      if (!m.fabric) missing.push('Material');
+                                      if (!m.condition) missing.push('Condition');
+                                      if (!m.size) missing.push('Size');
+                                    } else if (toteItemForm.category === 'Furniture') {
+                                      if (!m.subcategory) missing.push('Type');
+                                      if (!m.color) missing.push('Color / Finish');
+                                      if (!m.material) missing.push('Material');
+                                      if (!m.condition) missing.push('Condition');
+                                    }
+                                    return missing.length > 0 ? (
+                                      <p style={{ fontSize: '0.78rem', color: '#dc2626', margin: '0.5rem 0 0' }}>Required: {missing.join(', ')}</p>
+                                    ) : null;
+                                  })()}
+                                  <div style={{ display: 'flex', gap: '.75rem', marginTop: '.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    {(() => {
+                                      const m = toteItemForm.metadata;
+                                      const furnitureMissing = toteItemForm.category === 'Furniture' && (!m.subcategory || !m.color || !m.material || !m.condition);
+                                      const clothingMissing = toteItemForm.category === 'Clothing' && (!m.color || !m.fabric || !m.condition || !m.size);
+                                      return (
+                                        <button className="cr-btn-primary sm" onClick={() => editingToteItem ? updateToteItem(tote.id) : saveToteItem(tote.id)}
+                                          disabled={savingToteItem || !toteItemForm.itemDescription.trim() || !toteItemForm.agreementType || furnitureMissing || clothingMissing}>
+                                          {savingToteItem ? <><span className="cr-spinner"></span> Saving…</> : editingToteItem ? 'Update Item' : 'Save Item + Assign SKU'}
+                                        </button>
+                                      );
+                                    })()}
+                                    <button className="cr-btn-secondary" onClick={() => { setAddingToTote(null); setEditingToteItem(null); setToteItemForm({ itemDescription: '', storageLocation: '', category: 'Clothing', agreementType: '', metadata: {} }); setToteItemPreviews([]); setToteAiStatus('idle'); setSaveAsTemplate(false); }}>
+                                      Cancel
+                                    </button>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', color: '#374151', cursor: 'pointer', marginLeft: 'auto' }}>
+                                      <input type="checkbox" checked={saveAsTemplate} onChange={e => setSaveAsTemplate(e.target.checked)} style={{ accentColor: '#16a34a' }} />
+                                      Save as template
+                                    </label>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button className="cr-add-item-btn" onClick={() => setAddingToTote(tote.id)}>
+                                  + Add Item
+                                </button>
+                              )}
+                            </div>
+                          )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </main>
       )}
 
